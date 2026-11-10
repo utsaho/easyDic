@@ -1,0 +1,116 @@
+[
+  {
+    "name": "tesseract.js",
+    "version": "7.0.0",
+    "license": "Apache-2.0",
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/naptha/tesseract.js.git"
+    }
+  },
+  {
+    "name": "tesseract.js-core",
+    "version": "7.0.0",
+    "license": "Apache-2.0",
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/naptha/tesseract.js-core.git"
+    }
+  },
+  {
+    "name": "@tesseract.js-data/eng",
+    "version": "1.0.0",
+    "license": "MIT",
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/naptha/tessdata.git"
+    }
+  },
+  {
+    "name": "bmp-js",
+    "version": "0.1.0",
+    "license": "MIT",
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/shaozilee/bmp-js"
+    }
+  },
+  {
+    "name": "idb-keyval",
+    "version": "6.3.0",
+    "license": "Apache-2.0",
+    "repository": {
+      "type": "git",
+      "url": "git+https://github.com/jakearchibald/idb-keyval.git"
+    }
+  },
+  {
+    "name": "is-url",
+    "version": "1.2.4",
+    "license": "MIT",
+    "repository": "https://github.com/segmentio/is-url"
+  },
+  {
+    "name": "node-fetch",
+    "version": "2.7.0",
+    "license": "MIT",
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/bitinn/node-fetch.git"
+    }
+  },
+  {
+    "name": "opencollective-postinstall",
+    "version": "2.0.3",
+    "license": "MIT",
+    "repository": {
+      "type": "git",
+      "url": "git+https://github.com/opencollective/opencollective-postinstall.git"
+    }
+  },
+  {
+    "name": "regenerator-runtime",
+    "version": "0.13.11",
+    "license": "MIT",
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/facebook/regenerator/tree/main/packages/runtime"
+    }
+  },
+  {
+    "name": "wasm-feature-detect",
+    "version": "1.10.0",
+    "license": "Apache-2.0",
+    "repository": "GoogleChromeLabs/wasm-feature-detect"
+  },
+  {
+    "name": "zlibjs",
+    "version": "0.3.1",
+    "license": "MIT",
+    "repository": {
+      "type": "git",
+      "url": "git://github.com/imaya/zlib.js.git"
+    }
+  },
+  {
+    "name": "whatwg-url",
+    "version": "5.0.0",
+    "license": "MIT",
+    "repository": "jsdom/whatwg-url"
+  },
+  {
+    "name": "tr46",
+    "version": "0.0.3",
+    "license": "MIT",
+    "repository": {
+      "type": "git",
+      "url": "git+https://github.com/Sebmaster/tr46.js.git"
+    }
+  },
+  {
+    "name": "webidl-conversions",
+    "version": "3.0.1",
+    "license": "BSD-2-Clause",
+    "repository": "jsdom/webidl-conversions"
+  }
+]

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EasyDic</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <div class="popup-header">
+        <div class="brand-controls">
+          <h1>EasyDic</h1>
+          <input id="enabled" class="lookup-toggle" type="checkbox" aria-label="Automatically translate highlighted text" title="Automatically translate highlighted text" />
+        </div>
+        <div class="header-actions">
+          <button id="load-words" class="header-icon-button" type="button" aria-label="Load saved words" title="Load saved words">
+            <img src="assets/load-icon.webp" alt="" />
+          </button>
+          <button id="remove-words" class="header-icon-button" type="button" aria-label="Clear saved words" title="Clear saved words">
+            <img src="assets/remove-icon.webp" alt="" />
+          </button>
+        </div>
+      </div>
+      <form id="dictionary-search-form" class="dictionary-search" role="search">
+        <input id="dictionary-search-input" class="dictionary-search-input" type="search" placeholder="Translate English text" aria-label="English text to translate" autocomplete="off" />
+        <button id="dictionary-search-button" class="header-icon-button" type="submit" aria-label="Translate to Bangla" title="Translate to Bangla" disabled>
+          <img src="assets/search-icon.webp" alt="" />
+        </button>
+      </form>
+      <button id="scan-area" class="scan-button" type="button">Scan area <span>Alt+Shift+X</span></button>
+      <p class="reading-tip">Highlight text to translate here on the page. Save only what you want to keep.</p>
+      <div id="translation-fallback"></div>
+      <section class="flashcards" aria-labelledby="flashcards-title">
+        <div class="flashcards-header">
+          <h2 id="flashcards-title">Saved from this page</h2>
+          <div class="header-actions">
+            <button id="search-word" class="header-icon-button" type="button" aria-label="Translate the current entry" title="Translate current entry">
+              <img src="assets/search-icon.webp" alt="" />
+            </button>
+            <button id="save-words" class="header-icon-button" type="button" aria-label="Save all words" title="Save all words">
+              <img src="assets/save-button.webp" alt="" />
+            </button>
+          </div>
+        </div>
+        <p id="action-status" class="action-status" role="status" aria-live="polite"></p>
+        <div id="word-card" class="word-card" aria-live="polite">No saved words yet</div>
+        <div class="card-controls">
+          <button id="previous-word" type="button">Prev</button>
+          <button id="random-word" class="random-button" type="button" aria-label="Show a random word" title="Random word">
+            <img src="assets/random-icon.webp" alt="" />
+          </button>
+          <button id="next-word" type="button">Next</button>
+        </div>
+        <div id="word-position" aria-live="polite">0 / 0</div>
+      </section>
+    </main>
+    <script src="panel.js"></script>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

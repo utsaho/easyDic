@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "EasyDic",
+  "version": "2.0.0",
+  "minimum_chrome_version": "116",
+  "description": "Highlight English text or scan an image area for Bangla translation without leaving your article.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "offscreen"
+  ],
+  "host_permissions": ["https://api.mymemory.translated.net/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "commands": {
+    "scan-area": {
+      "suggested_key": { "default": "Alt+Shift+X" },
+      "description": "Scan an area for English text and translate to Bangla"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+  },
+  "action": {
+    "default_title": "EasyDic",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "assets/icon-16.png",
+      "32": "assets/icon-32.png",
+      "48": "assets/icon-48.png",
+      "128": "assets/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "assets/icon-16.png",
+    "32": "assets/icon-32.png",
+    "48": "assets/icon-48.png",
+    "128": "assets/icon-128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "panel.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
