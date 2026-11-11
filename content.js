@@ -1,9 +1,5 @@
 (() => {
-  let enabled = false;
   let panel;
-  let selectionTimer;
-  let pointerDown = false;
-  let lastSelection = "";
   let scan = null;
   let scanOperation = 0;
   let readingImage = false;
@@ -18,82 +14,38 @@
       onSaved(text) {
         if (!pageWords.some(word => word.toLowerCase() === text.toLowerCase())) pageWords.push(text);
       },
-      onClose() { lastSelection = ""; readingImage = false; clearTimeout(selectionTimer); scanState(false); }
+      onClose() { readingImage = false; scanState(false); }
     });
     return panel;
   }
-
-  chrome.storage.local.get("enabled").then(result => {
-    enabled = result.enabled !== false;
-    scheduleSelection();
-  }).catch(() => {});
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local" || !changes.enabled) return;
-    enabled = changes.enabled.newValue !== false;
-    if (!enabled) {
-      clearTimeout(selectionTimer);
-      lastSelection = "";
-      if (!readingImage && !scan) panel?.close();
-    }
-  });
 
   function editable(node) {
     const element = node instanceof Element ? node : node?.parentElement;
     return !!element && (element.isContentEditable || !!element.closest("input,textarea,select,[contenteditable]"));
   }
   function selectedText() {
-    if (editable(document.activeElement)) return "";
+    if (editable(document.activeElement) || document.activeElement === panel?.host) return "";
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || editable(selection.anchorNode) || editable(selection.focusNode)) return "";
+    if (selection.anchorNode?.getRootNode() === panel?.shadow || selection.focusNode?.getRootNode() === panel?.shadow) return "";
     return selection.toString().replace(/\s+/gu, " ").trim();
   }
-  function scheduleSelection() {
-    clearTimeout(selectionTimer);
-    if (!enabled || scan || readingImage || pointerDown || document.activeElement === panel?.host) return;
+
+  // Selection itself is entirely native. Only an explicit extension command
+  // reads it and starts a translation. Scanning has its own command.
+  function invokeSelection() {
+    if (scan || readingImage) return;
     const text = selectedText();
-    if (!text || text === lastSelection) return;
-    panel?.cancel();
-    selectionTimer = setTimeout(() => {
-      if (!enabled || pointerDown || scan || selectedText() !== text) return;
-      lastSelection = text;
-      getPanel().translate(text);
-    }, 350);
+    if (text) getPanel().translate(text);
   }
+
   document.addEventListener("pointerdown", event => {
     if (panel?.contains(event) || scan) return;
-    const dismissedSelection = selectedText();
     if (readingImage) cancelScan();
     else panel?.close();
-    // An outside click may preserve the selection (for example, a page control
-    // that prevents focus changes). Do not reopen it on the matching pointerup.
-    // A fresh selection clears this baseline through selectionchange below.
-    lastSelection = dismissedSelection;
-    pointerDown = true;
-    clearTimeout(selectionTimer);
   }, true);
-  document.addEventListener("pointerup", event => {
-    pointerDown = false;
-    if (!panel?.contains(event)) scheduleSelection();
-  }, true);
-  document.addEventListener("pointercancel", () => { pointerDown = false; }, true);
-  document.addEventListener("selectionchange", () => {
-    if (!enabled || scan || document.activeElement === panel?.host) return;
-    const text = selectedText();
-    if (readingImage && text && text !== lastSelection) cancelScan();
-    if (!text) lastSelection = "";
-    else if (text !== lastSelection) panel?.cancel();
-    scheduleSelection();
-  });
-  document.addEventListener("keyup", event => {
-    if (!panel?.contains(event) && event.key !== "Escape") scheduleSelection();
-  });
   document.addEventListener("keydown", event => {
-    if (event.key === "Escape") {
-      clearTimeout(selectionTimer);
-      cancelScan();
-      panel?.close();
-      lastSelection = selectedText();
-    }
+    if (event.key === "Escape") { cancelScan(); panel?.close(); }
   }, true);
 
   function cancelScan() {
@@ -101,13 +53,11 @@
     scanOperation++;
     scan?.host.remove();
     scan = null;
-    pointerDown = false;
     if (readingImage) { readingImage = false; panel?.close(); }
   }
 
   function beginScan() {
     cancelScan();
-    clearTimeout(selectionTimer);
     panel?.close();
     const host = document.createElement("div");
     host.style.cssText = "all:initial!important;position:fixed!important;inset:0!important;z-index:2147483647!important;display:block!important;";
@@ -156,7 +106,6 @@
       if (scanOperation !== state.id || document.hidden) return;
       await getPanel().readImage(state.rect, { width: innerWidth, height: innerHeight });
       if (scanOperation === state.id) { readingImage = false; scanState(false); }
-      lastSelection = selectedText();
     });
   }
 
@@ -164,7 +113,6 @@
     if (scan || readingImage) cancelScan();
   }, true);
   document.addEventListener("visibilitychange", () => {
-    pointerDown = false;
     if (document.hidden && (scan || readingImage)) cancelScan();
   });
   window.addEventListener("pagehide", () => { cancelScan(); panel?.cancel(); });
@@ -175,12 +123,11 @@
     if (message?.type === "canScan") respond({ ok: true });
     if (message?.type === "showTranslation") {
       cancelScan();
-      clearTimeout(selectionTimer);
-      lastSelection = selectedText();
       getPanel().translate(message.text);
       respond({ ok: true });
     }
-    if (message?.type === "beginScan") { beginScan(); respond({ ok: true }); }
+    if (message?.type === "invokeSelection") { invokeSelection(); respond({ ok: true }); }
+    if (message?.type === "beginScan") { if (!scan && !readingImage) beginScan(); respond({ ok: true }); }
     if (message?.type === "cancelScan") { cancelScan(); respond({ ok: true }); }
     if (message?.type === "captureComplete" && readingImage && panel?.operation === message.id) panel.captureComplete();
   });

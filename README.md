@@ -1,6 +1,6 @@
-# EasyDic 2.0
+# EasyDic 2.2
 
-Read English articles with Bangla translations in a small panel at the bottom right. Highlight a word, phrase, or sentence and release the mouse: EasyDic translates it without opening a tab or moving you away from the article. Keyboard text selection works too.
+Read English articles with Bangla translations without leaving the page. Select a word, phrase, or sentence, then press your EasyDic shortcut (default **Alt+Shift+X**) to translate it in a small bottom-right panel. Selecting, copying, and dragging text alone behave normally and never request a translation. Searches started in the toolbar stay inside the toolbar.
 
 ## Install or upgrade in Chrome / Brave
 
@@ -9,45 +9,77 @@ Read English articles with Bangla translations in a small panel at the bottom ri
 3. Choose this folder (containing `manifest.json`) and pin EasyDic in the browser toolbar.
 4. Refresh webpages that were already open before installation.
 
-For an upgrade, keep using the same folder and extension, click **Reload** on its extension card, and refresh webpages. Existing saved words and the lookup preference remain compatible. Do not uninstall to upgrade: uninstalling removes the extension's saved data. No Node.js installation, compilation, API key, or account is needed to use the extension.
+For an upgrade, keep using the same folder and extension, click **Reload** on its extension card, and refresh webpages. Existing saved words remain intact. The old automatic-translation preference is ignored; the obsolete checkbox has been removed. Do not uninstall to upgrade: uninstalling removes the extension's saved data. No Node.js installation, compilation, API key, or account is needed to use the extension.
 
 ## Translate while reading
 
-- Drag to highlight English text, or double-click a word. After selection settles for about 350 ms, the bottom-right panel shows the English text and Bangla translation.
-- The panel stays visible while you read and scroll. Click anywhere outside it, or press **Escape** or **×**, to close it. Clicks inside the panel keep it open. Selecting new text closes the old result and shows the new translation when selection finishes.
-- **Copy translation** copies Bangla text. If clipboard access is unavailable on a page, select and copy the result manually.
-- The checkbox beside **EasyDic** controls automatic translation. Search and image scanning remain available when it is off.
-- Type or paste text in the toolbar popup to translate it on the page. On protected pages, or pages awaiting refresh after installation, the translation appears inside the popup instead.
+- Select English text with the mouse or keyboard, then press **Alt+Shift+X** (or your assigned shortcut). Selection alone does nothing in EasyDic.
+- The bottom-right panel shows a muted English source and a larger Bangla translation. Translation does not change the article's scroll position or keyboard focus.
+- Click outside the panel, press **Escape**, or use **×** to close it. Clicks inside keep it open. Scrolling keeps completed results visible. A dismissed result cannot reopen when a delayed request finishes.
+- Selecting another passage closes the old result. Press the shortcut again to translate the new selection. Repeating the shortcut for the same pending text does not send duplicate requests.
+- **Save** stores the English source. To copy a translation, select its text and use your usual copy shortcut or context menu. Translation-service and privacy information is available in toolbar **Help**; result views contain no Copy or Information buttons.
 
-Editable fields and selections inside EasyDic are ignored. Selections can contain up to **2,000 characters**. Longer selections show a message rather than being silently cut off.
+Editable fields and selections inside EasyDic are excluded from article-text lookup. Selections can contain up to **2,000 characters**. Longer selections show an error rather than being silently cut off. With no eligible article text selected, **Alt+Shift+X does nothing**, including leaving an existing result unchanged. **Alt+Shift+A** starts scanning independently.
+
+## Use the toolbar
+
+The toolbar is **450 px wide**, with a single-line English search above two equal-width cards. The left card shows the saved English entry, count, and **Translate entry** button. The right card starts blank and displays Bangla after an explicit translation. **Previous / Random / Next** stay below both cards. **All saved entries** is selected when opened, including after a page refresh or browser restart.
+
+Ordinary word lookups fit without an outer scrollbar, targeting a content height below 590 px. The browser caps toolbar popups at 600 px. Long text, expanded Help, or a smaller viewport can still scroll so no content is clipped. Actual shortcut assignments and troubleshooting are available inside **Help**.
+
+- Type an English word and click **Translate** or press **Enter**. The single-line input also accepts phrases and sentences up to 2,000 characters.
+- **Previous / Random / Next** navigate saved vocabulary. Click **Translate entry** to translate the displayed saved entry.
+- Both actions use the right-hand result card. Saved-entry translations omit the repeated English source; typed searches show their source above Bangla. **Save** stores that result's English source. The empty right column stays reserved when a result is cleared.
+- Browsing vocabulary preserves your typed input. Changing the input, entry, or library view clears the old result and cancels obsolete operations; navigation does not translate automatically.
+- Choose **This page** to review entries saved from the current page's session. **Save this page's entries** merges that deck into the permanent library. Refreshing or closing the page clears its session deck.
+- **Clear library** clears permanent entries after confirmation. The current page's session deck remains available to save again.
+
+**All toolbar translations stay in the open toolbar**, including saved-entry lookups, loading, errors, retries, and saving. They never open a page panel or another tab. Toolbar translation also works on protected pages where article panels cannot run. The browser still closes its toolbar popup normally when you click outside it. Only **Scan area** intentionally closes the toolbar before opening the page selector.
 
 ## Scan text in an image
 
-1. Press **Alt+Shift+X**, or open EasyDic and click **Scan area**.
+1. Press **Alt+Shift+A** (or your assigned scan shortcut), or open EasyDic and click **Scan area**. Both always scan, even when article text is selected.
 2. Drag a box around visible, printed English text in an image or webpage.
-3. EasyDic captures the visible tab, crops the selected region, reads it locally, and translates the extracted text in the panel.
+3. EasyDic captures the visible tab, crops the selected region, reads it locally, and translates the extracted text in the bottom-right panel.
 4. If recognition is imperfect, click **Edit text**, correct the English text, and choose **Translate again**.
 
 Escape, scrolling, resizing, or changing tabs cancels an active scan. Tiny rectangles are rejected. Clear, sufficiently large text works best; handwriting and low-resolution text may not be recognized accurately. Scan only the visible region, without scrolling during capture.
 
-If another extension uses the shortcut, assign a different shortcut at `chrome://extensions/shortcuts` or `brave://extensions/shortcuts`. The popup button also works. Scanning requires an ordinary HTTP/HTTPS webpage with the content script loaded; browser settings pages, extension stores, built-in PDF viewers, and full-page stitched scans are outside this version.
+Scanning requires an ordinary HTTP/HTTPS webpage with the content script loaded. Browser settings pages, extension stores, built-in PDF viewers, and full-page stitched scans are outside this version.
+
+## Shortcut setup and troubleshooting
+
+Toolbar **Help** displays **both actual assigned shortcuts** from the browser, including custom remappings. Defaults on Windows, Linux, and macOS:
+
+| Shortcut | Action |
+| --- | --- |
+| Alt+Shift+X | Translate selected text; do nothing if no eligible text is selected. |
+| Alt+Shift+A | Scan image area, regardless of selected text. |
+
+The existing `scan-area` command identifier now means **Translate selected text**, retaining its previous X binding or user remapping. The new `capture-area` command handles scanning. Existing assignments are never overwritten. After upgrading, check both displayed bindings; the browser may leave a conflicting or unavailable shortcut unassigned.
+
+If a shortcut shows **Not assigned**, open `chrome://extensions/shortcuts` or `brave://extensions/shortcuts`. Assign Alt+Shift+X to **Translate selected text** and Alt+Shift+A to **Scan image area**, or choose other available keys.
+
+If a shortcut is assigned but does nothing:
+
+1. Use an ordinary webpage; protected browser pages cannot host the panel or scanner. Use the English text input in the toolbar there.
+2. Reload EasyDic on the extensions page and refresh articles opened before the reload.
+3. Check whether another extension uses the same shortcut.
+4. Check operating-system keyboard shortcuts, including input-language switching. Remap EasyDic if the system intercepts the combination. An extension cannot override a system-reserved shortcut.
+
+**Scan area** is also available in the toolbar. Both shortcuts use the browser Commands API, which grants temporary tab access for capture; there is no page-level listener pretending to handle the browser shortcut. Explicit platform declarations do not resolve browser or OS conflicts by themselves. See [Chrome Commands](https://developer.chrome.com/docs/extensions/reference/api/commands) and [activeTab](https://developer.chrome.com/docs/extensions/develop/concepts/activeTab).
 
 ## Save vocabulary explicitly
 
-Translation never automatically adds vocabulary. Click **Save** in the result panel to save its English source text permanently and add it to the current page's session deck. Words, phrases, and sentences are supported; Bangla translations are not stored in the vocabulary library.
+Translation never automatically adds vocabulary. **Save** in either result view uses the same background storage handler and writes the English source to `chrome.storage.local.savedWords`. Page-panel saves also add the entry to the current page's session deck. Bangla translations are not stored in the vocabulary library.
 
-- **Prev / Next** cycle through the deck; **Random** picks a different entry when possible.
-- The search icon translates the current entry on the page.
-- **Load saved words** replaces the displayed deck with the permanent library.
-- **Save all words** merges the current deck into the permanent library.
-- **Clear saved words** clears the permanent library after confirmation. It leaves the current page's session deck available to save again.
-- Reopening the popup returns to entries saved from the active page. Refreshing or closing that page clears its session deck, but keeps the permanent library.
+The button shows **Saving…**, then **Saved ✓** only after a successful write. A failed save shows an error and remains available to retry. Already-saved entries show Saved ✓. An open library refreshes when saved storage changes, preserving the current entry when it still exists.
 
-Duplicates are compared case-insensitively. The first saved spelling, capitalization, and punctuation are retained. Each browser profile has its own library and preference; there is no cloud synchronization.
+Duplicates are compared case-insensitively. The first saved spelling, capitalization, and punctuation are retained. Existing string-array vocabulary remains compatible; no migration is needed. Each browser profile has its own local library; there is no cloud synchronization.
 
 ## Translation service and privacy
 
-English-to-Bangla translation uses [MyMemory](https://mymemory.translated.net/). Only selected or extracted text is sent to its API; EasyDic does not send the article's URL or surrounding content. The provider processes that text under its own service terms. There is no analytics or tracking code in EasyDic.
+English-to-Bangla translation uses [MyMemory](https://mymemory.translated.net/). Only text you explicitly submit, select for translation, or extract through scanning is sent to its API; EasyDic does not send the article's URL or surrounding content. The provider processes that text under its own service terms. There is no analytics or tracking code in EasyDic.
 
 MyMemory's documented anonymous allowance is **5,000 characters per day**, and each request supports at most **500 UTF-8 bytes**. EasyDic splits long selections at sentence or word boundaries and reassembles their translations in order. Free service availability and translation accuracy can vary. This provides translation, not a dictionary entry listing every meaning.
 
@@ -59,11 +91,11 @@ References: [API specification](https://mymemory.translated.net/doc/spec.php), [
 
 ## Permissions and implementation
 
-- `storage`: persistent vocabulary/preference and temporary translation cache.
+- `storage`: persistent vocabulary and temporary translation cache.
 - `activeTab`: user-invoked visible-tab capture for scanning.
 - `offscreen`: a hidden extension document for local OCR and image cropping; it opens no visible window or tab.
 - `https://api.mymemory.translated.net/*`: translation requests from the background service worker.
-- Content scripts run on ordinary HTTP/HTTPS top-level documents. OCR can capture visible embedded image/text regions, but automatic text selection inside nested frames is not supported.
+- Content scripts run on ordinary HTTP/HTTPS top-level documents. OCR can capture visible embedded image/text regions, but shortcut lookup of selections inside nested frames is not supported.
 
 The extension uses Manifest V3 and plain JavaScript. `content.js` handles selection and scanning, `panel.js` provides the shared translation interface, `background.js` coordinates messaging and storage, `translation.js` handles translation/chunking/cache, and `offscreen.js` runs OCR. No hosted backend is required. Minimum declared Chromium version: 116; use a current desktop Chrome or Brave release.
 
@@ -78,6 +110,8 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-The unit suite checks UTF-8 chunking, input limits, vocabulary compatibility, request deduplication, cache persistence/eviction, partial retries, and errors. The browser suite uses an isolated profile and a local article, with mocked translation responses and real bundled OCR, so it does not consume the translation allowance. It exercises selection, saving, cancellation, scan capture, correction, responsive layout, and popup fallback. Set `BROWSER_EXECUTABLE` to a compatible Chrome for Testing or Brave executable to test a particular browser; `HEADED=1` enables a visible test window. It never uses your normal browser profile.
+The unit suite checks UTF-8 chunking, input limits, vocabulary compatibility, request deduplication, cache persistence/eviction, partial retries, and errors. The browser suite uses an isolated profile and a local article, with mocked translation responses and real bundled OCR, so it does not consume the translation allowance. It exercises passive selection, separate translation/scanning command routing, no-selection behavior, real toolbar lookups staying inline, shared result sources, saved-entry navigation, manual result selection, save failures and retries, concurrent writes, page-refresh/browser-restart persistence, scan capture, OCR correction, cancellation, and equal-width light/dark cards with empty libraries, Enter submission, no outer scrollbar for ordinary words, narrow viewports, and long results. A disposable extension copy exposes the production command router to the tests; translation responses are mocked, while capture and OCR are real. Set `BROWSER_EXECUTABLE` to a compatible Chrome for Testing or Brave executable to test a particular browser; `HEADED=1` enables a visible test window. It never uses your normal browser profile.
+
+**Native shortcut delivery on Windows and Linux remains unverified in this macOS workspace.** Routing tests and simulated browser input do not establish that Alt+Shift+X or Alt+Shift+A reaches Chrome or Brave on those platforms. Actual keypress checks on each OS/browser are still required.
 
 Third-party versions, license notices, and checksums are in `vendor/ocr/`. See `THIRD_PARTY_NOTICES.md` for attribution.

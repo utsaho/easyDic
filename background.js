@@ -160,11 +160,22 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   return true;
 });
 
-chrome.commands.onCommand.addListener(command => {
-  if (command === "scan-area") handle({ type: "startScan" }, {}).catch(() => {
+async function invokeShortcut(invokingTab, command = "scan-area") {
+  const tab = invokingTab?.id ? invokingTab : (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+  if (!tab?.id) throw new Error("Open an ordinary webpage to use EasyDic.");
+  const [active] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+  if (active?.id !== tab.id) return;
+  const result = await chrome.tabs.sendMessage(tab.id, { type: command === "capture-area" ? "beginScan" : "invokeSelection" }, { frameId: 0 });
+  if (!result?.ok) throw new Error("Refresh the page after reloading EasyDic.");
+  await chrome.action.setBadgeText({ text: "" });
+  await chrome.action.setTitle({ title: "EasyDic" });
+}
+
+chrome.commands.onCommand.addListener((command, tab) => {
+  if (["scan-area", "capture-area"].includes(command)) invokeShortcut(tab, command).catch(() => {
     // Protected pages cannot host the panel; the popup explains availability.
     chrome.action.setBadgeText({ text: "!" });
-    chrome.action.setTitle({ title: "EasyDic: open an ordinary webpage, then try scanning again" });
+    chrome.action.setTitle({ title: "EasyDic: open an ordinary webpage and refresh it, then try the shortcut again" });
   });
 });
 

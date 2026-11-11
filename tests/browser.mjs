@@ -1,378 +1,477 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, cp, appendFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const { chromium } = await import(process.env.PLAYWRIGHT_MODULE
-  ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : "playwright");
-const extension = resolve(import.meta.dirname, "..");
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : "playwright");
+const testFiles = await mkdtemp(join(tmpdir(), "easydic-test-extension-"));
+const extension = join(testFiles, "extension");
+await cp(resolve(import.meta.dirname, ".."), extension, { recursive: true,
+  filter: path => !/(?:^|\/)(?:node_modules|\.git|\.agents|\.codex)(?:\/|$)/.test(path) });
+// Expose the production router only in the disposable test copy. Service workers
+// prohibit dynamic imports, and native OS shortcut delivery needs a separate test.
+await appendFile(join(extension, "background.js"), "\nglobalThis.testInvokeShortcut = invokeShortcut;\n");
 const profile = await mkdtemp(join(tmpdir(), "easydic-browser-"));
 const fixture = `<!doctype html><html><head><title>Reading fixture</title><style>
- body{font:20px/1.8 system-ui;margin:40px;background:#fff;color:#111} p{max-width:620px} canvas{display:block;border:1px solid #aaa} .space{height:1500px}
- </style></head><body><h1>Keep reading</h1><p id="one">I am reading an article.</p><p id="two">A new sentence has a different meaning.</p><p id="slow">Slow translation.</p><p id="fail">Retry translation.</p><p id="multiline">First line.<br>Second line.</p><input aria-label="Editable text" value="Do not translate this input"><div contenteditable="true">Editable paragraph</div><canvas id="image" width="600" height="100"></canvas><div class="space"></div></body></html>`;
+body{font:20px/1.8 system-ui;margin:40px;background:#fff;color:#111}p{max-width:620px}canvas{display:block;border:1px solid #aaa}.space{height:1500px}
+</style></head><body><h1>Keep reading</h1><p id="one">I am reading an article.</p><p id="two">A new sentence has a different meaning.</p><p id="slow">Slow translation.</p><p id="fail">Retry translation.</p><p id="multiline">First line.<br>Second line.</p><input value="Editable text"><canvas width="600" height="100"></canvas><div class="space"></div></body></html>`;
 const server = createServer((_, response) => {
   response.writeHead(200, { "Content-Type": "text/html", "Content-Security-Policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'none'; img-src 'self' data:; worker-src 'none'" });
   response.end(fixture);
 });
-await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
 let context;
 const sessions = new WeakMap();
-async function shadow(page, selector, fn, args = []) {
-  let cdp = sessions.get(page);
-  if (!cdp) { cdp = await context.newCDPSession(page); sessions.set(page, cdp); }
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function until(check, label, timeout = 12000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) { const value = await check(); if (value) return value; await pause(70); }
+  throw new Error(`Timed out: ${label}`);
+}
+async function session(target) {
+  if (target.send) return target;
+  if (!sessions.has(target)) sessions.set(target, await context.newCDPSession(target));
+  return sessions.get(target);
+}
+async function shadow(target, selector, fn, args = []) {
+  const cdp = await session(target);
   const { root } = await cdp.send("DOM.getDocument", { depth: -1, pierce: true });
   function find(node) {
-    const attributes = node.attributes || [];
-    if (attributes.includes(selector)) return node;
-    for (const child of [...node.children || [], ...node.shadowRoots || []]) {
-      const match = find(child);
-      if (match) return match;
-    }
+    if (node.shadowRoots?.length && (node.attributes || []).includes(selector)) return node;
+    for (const child of [...node.children || [], ...node.shadowRoots || []]) { const match = find(child); if (match) return match; }
   }
   const host = find(root);
-  if (!host?.shadowRoots?.[0]) return null;
+  if (!host) return null;
   const { object } = await cdp.send("DOM.resolveNode", { backendNodeId: host.shadowRoots[0].backendNodeId });
-  const result = await cdp.send("Runtime.callFunctionOn", {
-    objectId: object.objectId, functionDeclaration: fn.toString(), arguments: args.map(value => ({ value })), returnByValue: true, awaitPromise: true
-  });
+  const result = await cdp.send("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: fn.toString(), arguments: args.map(value => ({ value })), returnByValue: true, awaitPromise: true });
   if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
   return result.result.value;
 }
-const panel = page => shadow(page, "data-easydic-panel", function () {
+const panel = (target, mount = "data-easydic-panel") => shadow(target, mount, function () {
   return { source: this.querySelector(".source").textContent, result: this.querySelector(".translation").textContent,
-    status: this.querySelector(".status").textContent, hidden: this.host.style.display === "none", edit: !this.querySelector(".edit").hidden };
+    status: this.querySelector(".status").textContent, hidden: this.host.style.display === "none", edit: !this.querySelector(".edit").hidden,
+    save: this.querySelector(".save").textContent, saveDisabled: this.querySelector(".save").disabled,
+    headerHidden: this.querySelector("header").hidden, sourceHidden: this.querySelector(".source-block").hidden, removedControls: this.querySelectorAll(".copy,.info-button,.info-details").length };
 });
-const click = async (page, selector) => {
-  const point = await shadow(page, "data-easydic-panel", function (selector) {
-    const rect = this.querySelector(selector).getBoundingClientRect();
-    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-  }, [selector]);
+const click = async (page, selector, mount = "data-easydic-panel") => {
+  await shadow(page, mount, function (selector) { this.querySelector(selector).scrollIntoView({ block: "nearest" }); }, [selector]);
+  const point = await shadow(page, mount, function (selector) { const r = this.querySelector(selector).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }, [selector]);
   await page.mouse.click(point.x, point.y);
 };
-async function until(check, label, timeout = 12000) {
-  const start = Date.now();
-  while (Date.now() - start < timeout) {
-    const value = await check();
-    if (value) return value;
-    await new Promise(resolve => setTimeout(resolve, 70));
-  }
-  throw new Error(`Timed out: ${label}`);
-}
 const select = (page, selector) => page.evaluate(selector => {
   document.activeElement?.blur();
-  const range = document.createRange();
-  range.selectNodeContents(document.querySelector(selector));
-  const selection = window.getSelection();
-  selection.removeAllRanges(); selection.addRange(range);
+  const range = document.createRange(); range.selectNodeContents(document.querySelector(selector));
+  getSelection().removeAllRanges(); getSelection().addRange(range);
 }, selector);
-try {
-  context = await chromium.launchPersistentContext(profile, {
-    headless: process.env.HEADED !== "1", channel: process.env.BROWSER_EXECUTABLE ? undefined : "chromium",
-    executablePath: process.env.BROWSER_EXECUTABLE || undefined,
-    viewport: { width: 1100, height: 850 }, deviceScaleFactor: 2,
-    args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, "--no-first-run", "--disable-component-update", "--enable-unsafe-extension-debugging"]
-  });
-  const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
-  const extensionId = new URL(worker.url()).hostname;
+const launch = () => chromium.launchPersistentContext(profile, {
+  headless: process.env.HEADED !== "1", channel: process.env.BROWSER_EXECUTABLE ? undefined : "chromium",
+  executablePath: process.env.BROWSER_EXECUTABLE || undefined, viewport: { width: 1100, height: 850 }, deviceScaleFactor: 2,
+  args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, "--no-first-run", "--disable-component-update", "--enable-unsafe-extension-debugging"]
+});
+async function mockTranslation(worker) {
   await worker.evaluate(() => {
-    chrome.runtime.onMessage.addListener(message => {
-      if (message.target === "background" && message.type === "readImage") {
-        globalThis.captureGeometry = { rect: message.rect, viewport: message.viewport };
-      }
-    });
-    const capture = chrome.tabs.captureVisibleTab.bind(chrome.tabs);
-    chrome.tabs.captureVisibleTab = async (...args) => {
-      globalThis.lastCapture = await capture(...args);
-      return globalThis.lastCapture;
-    };
     globalThis.requests = [];
-    globalThis.originalFetch = globalThis.fetch;
     globalThis.failOnce = true;
+    const original = globalThis.fetch;
     globalThis.fetch = async (url, options) => {
-      if (!String(url).startsWith("https://api.mymemory.translated.net/get?")) return originalFetch(url, options);
-      const text = new URL(url).searchParams.get("q");
-      requests.push(text);
+      if (!String(url).startsWith("https://api.mymemory.translated.net/get?")) return original(url, options);
+      const text = new URL(url).searchParams.get("q"); requests.push(text);
       if (text.startsWith("Slow")) await new Promise(resolve => setTimeout(resolve, 1100));
       if (text.startsWith("Retry") && failOnce) { failOnce = false; throw new TypeError("Offline"); }
-      return new Response(JSON.stringify({ responseStatus: 200, responseData: { translatedText: `বাংলা: ${text}` } }), { headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ responseStatus: 200, responseData: { translatedText: text === "I am reading an article." ? "আমি একটি নিবন্ধ পড়ছি।" : `বাংলা: ${text}` } }), { headers: { "Content-Type": "application/json" } });
     };
-    return chrome.storage.local.set({ savedWords: ["Legacy", "hello"], enabled: true });
   });
+}
+// Native toolbar popups are CDP targets, not Playwright pages. This adapter lets
+// the same DOM inspection exercise the real popup without opening another tab.
+async function attachPopup(browserCDP, targetId) {
+  const { sessionId } = await browserCDP.send("Target.attachToTarget", { targetId, flatten: false });
+  let counter = 0;
+  const pending = new Map();
+  browserCDP.on("Target.receivedMessageFromTarget", event => {
+    if (event.sessionId !== sessionId) return;
+    const response = JSON.parse(event.message);
+    const waiter = pending.get(response.id);
+    if (!waiter) return;
+    clearTimeout(waiter.timer); pending.delete(response.id);
+    response.error ? waiter.reject(new Error(response.error.message)) : waiter.resolve(response.result);
+  });
+  return { async send(method, params = {}) {
+    const id = ++counter;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error(`Popup command timed out: ${method}`)); }, 7000);
+      pending.set(id, { resolve, reject, timer });
+      browserCDP.send("Target.sendMessageToTarget", { sessionId, message: JSON.stringify({ id, method, params }) }).catch(reject);
+    });
+  } };
+}
+async function evaluateTarget(cdp, expression) {
+  const response = await cdp.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true, userGesture: true });
+  if (response.exceptionDetails) throw new Error(response.exceptionDetails.text);
+  return response.result.value;
+}
+
+try {
+  context = await launch();
+  let worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
+  const extensionId = new URL(worker.url()).hostname;
+  await mockTranslation(worker);
+  await worker.evaluate(() => chrome.storage.local.set({ savedWords: ["Legacy", "hello"], enabled: false }));
   const page = context.pages()[0] || await context.newPage();
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
-  await page.goto(`http://127.0.0.1:${server.address().port}`);
+  const articleUrl = `http://127.0.0.1:${server.address().port}`;
+  await page.goto(articleUrl);
   await page.evaluate(() => {
-    const canvas = document.querySelector("canvas");
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "white"; ctx.fillRect(0, 0, 600, 100);
-    ctx.fillStyle = "black"; ctx.font = "32px Arial"; ctx.fillText("Reading makes life better.", 20, 60);
+    const c = document.querySelector("canvas").getContext("2d"); c.fillStyle = "white"; c.fillRect(0, 0, 600, 100);
+    c.fillStyle = "black"; c.font = "32px Arial"; c.fillText("Reading makes life better.", 20, 60);
   });
-  const tabId = await worker.evaluate(async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0].id);
-  const tabsBefore = context.pages().length;
-  await select(page, "#one");
-  await until(async () => (await panel(page))?.result.includes("I am reading"), "highlight translation");
+  const tab = await worker.evaluate(async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0]);
+  await until(async () => {
+    try { return (await worker.evaluate(id => chrome.tabs.sendMessage(id, { type: "canScan" }), tab.id)).ok; } catch { return false; }
+  }, "content script ready");
+  // Calls the production command router. Does NOT claim to simulate OS key delivery.
+  const invoke = (command = "scan-area") => worker.evaluate(({ tab, command }) => testInvokeShortcut(tab, command), { tab, command });
+  const saved = () => worker.evaluate(async () => (await chrome.storage.local.get("savedWords")).savedWords);
+
+  await select(page, "#one"); await pause(500);
+  assert.equal(await page.locator("[data-easydic-panel]").count(), 0);
+  await page.keyboard.press("Shift+ArrowLeft"); await pause(100);
+  assert.deepEqual(await worker.evaluate(() => requests), []);
+  await page.locator("input").focus(); await page.locator("input").evaluate(input => input.select()); await pause(100);
+  assert.deepEqual(await worker.evaluate(() => requests), []);
+  await select(page, "#one"); await invoke();
+  await until(async () => (await panel(page))?.result === "আমি একটি নিবন্ধ পড়ছি।", "command-selected translation");
   assert.equal(await page.evaluate(() => scrollY), 0);
   assert.equal(await page.evaluate(() => document.activeElement.tagName), "BODY");
-  assert.deepEqual(await worker.evaluate(async () => (await chrome.storage.local.get("savedWords")).savedWords), ["Legacy", "hello"]);
+  assert.deepEqual(await saved(), ["Legacy", "hello"]);
+  assert.equal((await panel(page)).removedControls, 0);
+  await page.screenshot({ path: join(tmpdir(), "easydic-page-result.png") });
+  console.log("PASS native selection remains passive; selection command translates; old enabled preference ignored");
+
+  await worker.evaluate(() => {
+    globalThis.originalSet = chrome.storage.local.set.bind(chrome.storage.local);
+    globalThis.rejectSave = true;
+    chrome.storage.local.set = async value => {
+      if (value.savedWords) {
+        if (globalThis.rejectSave) { globalThis.rejectSave = false; throw new Error("Simulated storage failure"); }
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      return originalSet(value);
+    };
+  });
   await click(page, ".save");
-  await until(async () => (await panel(page))?.status.includes("Saved to"), "explicit save");
-  assert.deepEqual(await worker.evaluate(async () => (await chrome.storage.local.get("savedWords")).savedWords), ["Legacy", "hello", "I am reading an article."]);
-  const deck = await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: "getTemporaryWords" }), tabId);
-  assert.deepEqual(deck.words, ["I am reading an article."]);
-  console.log("PASS highlight, focus, explicit saving, legacy storage, page deck");
+  await until(async () => (await panel(page))?.status.includes("Could not save"), "save failure");
+  assert.deepEqual(await saved(), ["Legacy", "hello"]);
+  await click(page, ".save");
+  assert.equal((await panel(page)).save, "Saving…");
+  await until(async () => (await panel(page))?.save === "Saved ✓", "confirmed persistent save");
+  assert.equal((await panel(page)).status, "");
+  assert.deepEqual(await saved(), ["Legacy", "hello", "I am reading an article."]);
+  await worker.evaluate(() => { chrome.storage.local.set = originalSet; });
+  await page.evaluate(() => { document.querySelector("#one").textContent = "I AM READING AN ARTICLE."; });
+  await select(page, "#one"); await invoke();
+  await until(async () => (await panel(page))?.source === "I AM READING AN ARTICLE.", "duplicate source");
+  assert.equal((await panel(page)).save, "Saved ✓");
+  assert.equal((await panel(page)).saveDisabled, true);
+  assert.equal((await saved()).length, 3);
+  console.log("PASS shared local saving, write failure/retry, Saving/Saved feedback, and duplicate recognition");
 
-  // Real pointer events exercise closed Shadow DOM containment, not just .click().
-  await click(page, ".source");
+  await select(page, "#slow"); await invoke(); await invoke(); await invoke();
+  assert.equal(await page.locator("[data-easydic-panel]").count(), 1);
+  await until(async () => (await worker.evaluate(() => requests)).includes("Slow translation."), "pending request");
+  assert.equal((await worker.evaluate(() => requests)).filter(text => text === "Slow translation.").length, 1);
+  await page.mouse.click(950, 80); assert.equal((await panel(page)).hidden, true);
+  await pause(1300); assert.equal((await panel(page)).hidden, true);
+  await select(page, "#two"); await pause(450); assert.equal((await panel(page)).hidden, true);
+  await invoke(); await until(async () => (await panel(page))?.result.includes("different meaning"), "new command");
+  await click(page, ".source"); assert.equal((await panel(page)).hidden, false);
+  const textPoint = await shadow(page, "data-easydic-panel", function () { const r = this.querySelector(".translation").getBoundingClientRect(); return { x: r.x + 24, y: r.y + 14 }; });
+  await page.mouse.dblclick(textPoint.x, textPoint.y);
   assert.equal((await panel(page)).hidden, false);
-  const insideRange = await shadow(page, "data-easydic-panel", function () {
-    const range = document.createRange();
-    const text = this.querySelector(".source").firstChild;
-    range.setStart(text, 0); range.setEnd(text, 12);
-    const rect = range.getBoundingClientRect();
-    return { x: rect.x, y: rect.y + rect.height / 2, right: rect.right };
-  });
-  await page.mouse.move(insideRange.x, insideRange.y);
-  await page.mouse.down();
-  await page.mouse.move(insideRange.right, insideRange.y, { steps: 5 });
-  await page.mouse.up();
-  await new Promise(resolve => setTimeout(resolve, 450));
-  assert.equal((await panel(page)).hidden, false);
-  assert.equal((await panel(page)).source, "I am reading an article.");
-  await click(page, ".copy");
-  assert.equal((await panel(page)).hidden, false);
-  await page.evaluate(() => scrollTo(0, 80));
-  await new Promise(resolve => setTimeout(resolve, 100));
-  assert.equal((await panel(page)).hidden, false);
+  assert.ok(await shadow(page, "data-easydic-panel", function () { return this.getSelection().toString().length > 0; }));
+  await page.evaluate(() => scrollTo(0, 80)); await pause(100); assert.equal((await panel(page)).hidden, false);
   await page.evaluate(() => scrollTo(0, 0));
+  await page.keyboard.press("Escape"); assert.equal((await panel(page)).hidden, true);
+  await select(page, "#fail"); await invoke();
+  await until(async () => (await panel(page))?.status.includes("internet"), "translation error");
+  await click(page, ".retry"); await until(async () => (await panel(page))?.result.includes("Retry translation"), "retry");
+  await page.evaluate(() => { document.querySelector("#two").textContent = "x".repeat(2001); });
+  await select(page, "#two"); await invoke();
+  assert.match((await panel(page)).status, /2,000/);
+  assert.equal(await page.locator("[data-easydic-scan]").count(), 0);
+  console.log("PASS duplicate command suppression, outside/Escape dismissal, scrolling, error/retry, and oversized selection");
+  await page.evaluate(() => { document.querySelector("#two").textContent = "A new sentence has a different meaning."; });
 
-  // A page may prevent the default focus/selection change on its controls.
-  await select(page, "#one");
-  await page.evaluate(() => document.body.addEventListener("pointerdown", event => event.preventDefault(), { once: true }));
-  await page.mouse.click(950, 80);
-  assert.equal((await panel(page)).hidden, true);
-  await new Promise(resolve => setTimeout(resolve, 450));
-  assert.equal((await panel(page)).hidden, true, "An unchanged selection must not reopen the dismissed result");
-  // Clear the old highlight before starting a fresh selection; dragging an
-  // existing highlight starts the browser's native text drag-and-drop instead.
-  await page.mouse.click(950, 120);
-
-  // Drag over the same text again, then over different text while a result is open.
-  async function dragSelection(selector) {
-    const rect = await page.locator(selector).evaluate(element => {
-      const range = document.createRange(); range.selectNodeContents(element);
-      const rect = range.getBoundingClientRect();
-      return { x: rect.x, y: rect.y + rect.height / 2, right: rect.right };
-    });
-    await page.mouse.move(rect.x, rect.y); await page.mouse.down();
-    assert.equal((await panel(page)).hidden, true);
-    await page.mouse.move(rect.right, rect.y, { steps: 8 }); await page.mouse.up();
-  }
-  await dragSelection("#one");
-  await until(async () => !(await panel(page))?.hidden && (await panel(page)).source === "I am reading an article.", "reselect same text");
-  await dragSelection("#two");
-  await until(async () => !(await panel(page))?.hidden && (await panel(page)).source.includes("different meaning"), "new dragged selection");
-
-  await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: "showTranslation", text: "Slow outside dismissal." }), tabId);
-  await page.mouse.click(950, 80);
-  assert.equal((await panel(page)).hidden, true);
-  await new Promise(resolve => setTimeout(resolve, 1300));
-  assert.equal((await panel(page)).hidden, true, "A late response must not reopen the panel");
-  console.log("PASS outside dismissal, retained selection, fresh drag selection, inside controls/text, scrolling, and delayed responses");
-
-  await select(page, "#multiline");
-  await until(async () => (await panel(page))?.result.includes("First line. Second line."), "multiline selection");
+  await page.evaluate(() => { document.activeElement?.blur(); getSelection().removeAllRanges(); });
+  const unchangedPanel = await panel(page);
+  const unchangedRequests = await worker.evaluate(() => requests.length);
+  await invoke(); await invoke();
+  assert.deepEqual(await panel(page), unchangedPanel);
+  assert.equal(await worker.evaluate(() => requests.length), unchangedRequests);
+  assert.equal(await page.locator("[data-easydic-scan]").count(), 0);
+  await select(page, "#one"); await invoke("capture-area"); await invoke("capture-area");
+  assert.equal(await page.locator("[data-easydic-scan]").count(), 1);
   await page.keyboard.press("Escape");
-  const requestCount = await worker.evaluate(() => requests.length);
-  await page.locator("input").focus();
-  await page.locator("input").evaluate(input => input.select());
-  await new Promise(resolve => setTimeout(resolve, 450));
-  assert.equal(await worker.evaluate(() => requests.length), requestCount);
+  await page.evaluate(() => getSelection().removeAllRanges()); await invoke("capture-area");
+  assert.equal(await page.locator("[data-easydic-scan]").count(), 1);
+  await page.keyboard.press("Escape"); await invoke();
+  assert.equal(await page.locator("[data-easydic-scan]").count(), 0);
   assert.equal((await panel(page)).hidden, true);
-  await select(page, "#two");
-  await page.evaluate(() => {
-    const selection = getSelection();
-    selection.collapseToStart();
-    selection.modify("extend", "forward", "word");
-  });
-  await page.keyboard.press("Shift+ArrowRight");
-  const keyboardText = await page.evaluate(() => getSelection().toString().trim());
-  await until(async () => (await panel(page))?.result.includes(keyboardText) && (await panel(page)).source === keyboardText, "keyboard selection");
-  console.log("PASS multiline and keyboard selection; editable text ignored");
+  console.log("PASS separate command routing: X without selection does nothing; A scans with or without selection");
 
-  await select(page, "#slow");
-  await until(async () => (await panel(page))?.status === "Translating…", "slow request starts");
-  await select(page, "#two");
-  await until(async () => (await panel(page))?.result.includes("different meaning"), "new selection wins");
-  await new Promise(resolve => setTimeout(resolve, 1200));
-  assert.ok((await panel(page)).result.includes("different meaning"));
-  await page.keyboard.press("Escape");
-  assert.equal((await panel(page)).hidden, true);
-  await select(page, "#fail");
-  await until(async () => (await panel(page))?.status.includes("internet"), "offline error");
-  await page.mouse.click(950, 80);
-  assert.equal((await panel(page)).hidden, true, "Outside click dismisses errors too");
-  await worker.evaluate(() => { globalThis.failOnce = true; });
-  await select(page, "#fail");
-  await until(async () => !(await panel(page))?.hidden && (await panel(page))?.status.includes("internet"), "reopened offline error");
-  await click(page, ".retry");
-  await until(async () => (await panel(page))?.result.includes("Retry translation"), "retry result");
-  console.log("PASS stale request cancellation, Escape, error and retry");
-
-  await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: "showTranslation", text: "Slow close request." }), tabId);
-  await click(page, ".close");
-  await new Promise(resolve => setTimeout(resolve, 1300));
-  assert.equal((await panel(page)).hidden, true);
-  await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: "showTranslation", text: "x".repeat(2001) }), tabId);
-  await until(async () => (await panel(page))?.status.includes("2,000"), "oversized text feedback");
-  assert.ok(!(await worker.evaluate(() => requests)).some(text => text.length > 2000));
-
-  await worker.evaluate(() => chrome.storage.local.set({ enabled: false }));
-  await select(page, "#multiline");
-  await new Promise(resolve => setTimeout(resolve, 500));
-  assert.equal((await panel(page)).hidden, true);
-
-  // Trigger the real toolbar action to grant activeTab, then click Scan area.
-  // Synthetic page keystrokes do not dispatch browser-level extension commands.
-  await page.bringToFront();
-  const commands = await worker.evaluate(() => chrome.commands.getAll());
-  assert.ok(commands.find(command => command.name === "scan-area")?.shortcut);
+  // Exercise an actual toolbar popup while an ordinary article is active.
   const browserCDP = await context.browser().newBrowserCDPSession();
-  const { targetInfos } = await browserCDP.send("Target.getTargets", { filter: [{ type: "tab", exclude: false }] });
-  const targetInfo = targetInfos.find(target => target.url === page.url());
-  assert.ok(targetInfo, "Article tab target exists");
-  await browserCDP.send("Extensions.triggerAction", { id: extensionId, targetId: targetInfo.targetId });
-  const popupTarget = await until(async () => {
-    const { targetInfos } = await browserCDP.send("Target.getTargets", { filter: [{}] });
-    return targetInfos.find(item => item.url === `chrome-extension://${extensionId}/popup.html`);
-  }, "toolbar popup", 5000);
-  const { sessionId: popupSession } = await browserCDP.send("Target.attachToTarget", { targetId: popupTarget.targetId, flatten: false });
-  await browserCDP.send("Target.sendMessageToTarget", { sessionId: popupSession, message: JSON.stringify({
-    id: 1, method: "Runtime.evaluate", params: { expression: "document.readyState !== 'complete' ? window.addEventListener('load', () => document.getElementById('scan-area').click()) : document.getElementById('scan-area').click()" }
-  }) });
-  await until(async () => page.locator("[data-easydic-scan]").count(), "scan area", 5000);
-  await until(async () => {
-    const { targetInfos } = await browserCDP.send("Target.getTargets", { filter: [{}] });
-    return !targetInfos.some(item => item.targetId === popupTarget.targetId);
-  }, "scan popup closes");
-  const rect = await page.locator("canvas").boundingBox();
-  await page.mouse.move(rect.x + 2, rect.y + 2);
-  await page.mouse.down();
-  await page.mouse.move(rect.x + rect.width - 2, rect.y + rect.height - 2, { steps: 10 });
-  await page.mouse.up();
-  await until(async () => { const state = await panel(page); return state?.edit && !state.hidden && state.result; }, "real local OCR", 55000);
-  assert.match((await panel(page)).source, /Reading makes life better/i);
-  assert.equal((await panel(page)).edit, true);
+  const targets = await browserCDP.send("Target.getTargets", { filter: [{ type: "tab", exclude: false }] });
+  await browserCDP.send("Extensions.triggerAction", { id: extensionId, targetId: targets.targetInfos.find(t => t.url === page.url()).targetId });
+  const popupTarget = await until(async () => (await browserCDP.send("Target.getTargets", { filter: [{}] })).targetInfos.find(t => t.url === `chrome-extension://${extensionId}/popup.html`), "native toolbar popup");
+  const toolbar = await attachPopup(browserCDP, popupTarget.targetId);
+  await until(async () => await evaluateTarget(toolbar, 'document.readyState === "complete" && document.getElementById("word-card").textContent === "Legacy"'), "all saved default");
+  assert.equal(await evaluateTarget(toolbar, 'document.body.getBoundingClientRect().width'), 450);
+  assert.equal(await evaluateTarget(toolbar, 'document.documentElement.scrollWidth <= innerWidth'), true);
+  const initialReview = await evaluateTarget(toolbar, `(() => {
+    const left = document.querySelector('.word-card').getBoundingClientRect();
+    const right = document.querySelector('.result-card').getBoundingClientRect();
+    return { leftWidth: left.width, rightWidth: right.width, gap: right.x - left.right,
+      height: document.querySelector('main').getBoundingClientRect().height,
+      navY: document.querySelector('.card-controls').getBoundingClientRect().y,
+      blank: document.getElementById('translation-result').childElementCount === 0,
+      inputTag: document.getElementById('dictionary-search-input').tagName,
+      viewport: innerHeight, screenHeight: screen.height, bodyClient: document.body.clientHeight,
+      bodyScroll: document.body.scrollHeight, docScroll: document.documentElement.scrollHeight };
+  })()`);
+  assert.equal(initialReview.leftWidth, initialReview.rightWidth);
+  assert.equal(initialReview.gap, 12);
+  assert.equal(initialReview.blank, true);
+  assert.equal(initialReview.inputTag, "INPUT");
+  assert.ok(initialReview.height < 590, JSON.stringify(initialReview));
+  // The default headless display is only 600 px tall and limits native popups
+  // to 498 px. Smaller displays may scroll; the normal desktop must fit.
+  const fullHeightAvailable = initialReview.screenHeight >= 700;
+  assert.ok(initialReview.bodyScroll <= initialReview.bodyClient + 1);
+  if (fullHeightAvailable) await until(async () => await evaluateTarget(toolbar, 'document.documentElement.scrollHeight <= innerHeight + 1'), "no initial native popup scrollbar");
+  await evaluateTarget(toolbar, 'document.getElementById("search-word").click()');
+  await until(async () => (await panel(toolbar, "translation-result"))?.result.includes("Legacy"), "native toolbar saved lookup");
+  assert.equal((await panel(toolbar, "translation-result")).headerHidden, true);
+  assert.equal((await panel(toolbar, "translation-result")).sourceHidden, true);
+  assert.equal(await evaluateTarget(toolbar, 'document.querySelector(".card-controls").getBoundingClientRect().y'), initialReview.navY);
+  assert.ok(await evaluateTarget(toolbar, 'document.querySelector("main").getBoundingClientRect().height < 590'));
+  if (fullHeightAvailable) await until(async () => await evaluateTarget(toolbar, 'document.documentElement.scrollHeight <= innerHeight + 1 && document.body.scrollHeight <= document.body.clientHeight + 1'), "no scrollbar for a translated word");
+  console.log(`PASS native equal-column layout: ${Math.round(initialReview.height)} px content, ${initialReview.viewport} px available (${fullHeightAvailable ? "no scrollbar" : "small-screen scrolling allowed"})`);
+  assert.equal((await panel(page)).hidden, true);
+  assert.ok((await browserCDP.send("Target.getTargets", { filter: [{}] })).targetInfos.some(t => t.targetId === popupTarget.targetId));
+  await evaluateTarget(toolbar, 'document.getElementById("dictionary-search-input").value="Toolbar translation."; document.getElementById("dictionary-search-input").dispatchEvent(new Event("input")); document.getElementById("dictionary-search-button").click()');
+  await until(async () => (await panel(toolbar, "translation-result"))?.result.includes("Toolbar translation"), "native toolbar typed lookup");
+  assert.equal((await panel(page)).hidden, true);
+  const beforeClear = await saved();
+  await evaluateTarget(toolbar, 'document.getElementById("library-view").value="page"; document.getElementById("library-view").dispatchEvent(new Event("change"))');
+  assert.equal(await evaluateTarget(toolbar, 'document.getElementById("word-card").textContent'), "I am reading an article.");
+  assert.equal(await evaluateTarget(toolbar, 'document.getElementById("save-words").hidden'), false);
+  await evaluateTarget(toolbar, 'window.confirm=()=>false; document.getElementById("remove-words").click()');
+  assert.deepEqual(await saved(), beforeClear);
+  await evaluateTarget(toolbar, 'window.confirm=()=>true; document.getElementById("remove-words").click()');
+  await until(async () => (await saved()).length === 0, "confirmed clear library");
+  assert.equal(await evaluateTarget(toolbar, 'document.getElementById("word-card").textContent'), "I am reading an article.");
+  await until(async () => await evaluateTarget(toolbar, '!document.getElementById("save-words").disabled'), "bulk save available");
+  await evaluateTarget(toolbar, 'document.getElementById("save-words").click()');
+  await until(async () => (await saved()).length === 1, "restore page deck to library");
+  await worker.evaluate(savedWords => chrome.storage.local.set({ savedWords }), beforeClear);
+  console.log("PASS This page deck, clear confirmation/cancellation, and bulk restoration");
+  await evaluateTarget(toolbar, 'document.getElementById("scan-area").click()').catch(error => {
+    if (!/closed|timed out|target/i.test(error.message)) throw error;
+  });
+  await until(async () => await page.locator("[data-easydic-scan]").count(), "scan after popup closes");
+  assert.ok(!(await browserCDP.send("Target.getTargets", { filter: [{}] })).targetInfos.some(t => t.targetId === popupTarget.targetId));
+  console.log("PASS real toolbar saved and typed results stay inline; only Scan area closes it");
+
+  async function dragCanvas() {
+    const rect = await page.locator("canvas").boundingBox();
+    await page.mouse.move(rect.x + 2, rect.y + 2); await page.mouse.down();
+    await page.mouse.move(rect.x + rect.width - 2, rect.y + rect.height - 2, { steps: 8 }); await page.mouse.up();
+    await until(async () => { const state = await panel(page); return state?.edit && !state.hidden && state.result; }, "real OCR", 55000);
+    assert.match((await panel(page)).source, /Reading makes life better/i);
+  }
+  await dragCanvas();
   await click(page, ".edit");
   await shadow(page, "data-easydic-panel", function () { this.querySelector("textarea").value = "Corrected image text."; });
-  await click(page, ".again");
-  await until(async () => (await panel(page))?.result.includes("Corrected image text"), "OCR correction");
-  assert.equal(context.pages().length, tabsBefore);
-  assert.equal(errors.length, 0, errors.join("\n"));
-  await page.screenshot({ path: join(tmpdir(), "easydic-panel.png") });
-  console.log("PASS shortcut registration, toolbar scan with automatic translation disabled, local OCR at 2× density, correction, no new tabs");
-
-  // Browser zoom changes CSS coordinates; capture-to-crop mapping must still agree.
-  await worker.evaluate(tabId => chrome.tabs.setZoom(tabId, 1.25), tabId);
-  await new Promise(resolve => setTimeout(resolve, 250));
+  await click(page, ".again"); await until(async () => (await panel(page))?.result.includes("Corrected image text"), "OCR correction");
+  await worker.evaluate(id => chrome.tabs.setZoom(id, 1.25), tab.id); await pause(250);
   await page.locator("canvas").scrollIntoViewIfNeeded();
-  await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: "beginScan" }), tabId);
-  const zoomed = await page.locator("canvas").boundingBox();
-  await page.mouse.move(zoomed.x + 3, zoomed.y + 3);
-  await page.mouse.down();
-  await page.mouse.move(Math.min(1090, zoomed.x + zoomed.width - 3), zoomed.y + zoomed.height - 3, { steps: 8 });
-  await page.mouse.up();
-  await until(async () => { const state = await panel(page); return state?.edit && !state.hidden && state.result; }, "OCR with browser zoom", 55000);
-  assert.match((await panel(page)).source, /Reading makes life better/i);
-  await worker.evaluate(tabId => chrome.tabs.setZoom(tabId, 1), tabId);
-  await page.evaluate(() => scrollTo(0, 0));
-  await new Promise(resolve => setTimeout(resolve, 250));
-  console.log("PASS local OCR at 125% browser zoom");
-
-  await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: "beginScan" }), tabId);
-  await page.mouse.move(800, 100);
-  await page.mouse.down();
-  await page.mouse.move(1000, 220, { steps: 5 });
-  await page.mouse.up();
-  await until(async () => (await panel(page))?.status.includes("No English text found"), "blank image feedback", 55000);
-  assert.equal((await panel(page)).result, "");
-  console.log("PASS blank image produces an actionable OCR error");
-
-  await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: "beginScan" }), tabId);
-  await page.mouse.move(20, 20); await page.mouse.down();
-  await page.mouse.move(22, 22); await page.mouse.up();
-  assert.equal(await page.locator("[data-easydic-scan]").count(), 1);
-  assert.match(await shadow(page, "data-easydic-scan", function () { return this.querySelector(".hint").textContent; }), /larger box/);
-  const other = await context.newPage();
-  await other.goto("about:blank");
-  await other.bringToFront();
-  await until(async () => !await page.locator("[data-easydic-scan]").count(), "tab switch cancels scan");
-  await other.close();
-  await page.bringToFront();
-  console.log("PASS tiny scan rejection and tab-switch cancellation");
-
-  await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: "beginScan" }), tabId);
-  await until(async () => page.locator("[data-easydic-scan]").count(), "second scan");
-  await page.keyboard.press("Escape");
-  assert.equal(await page.locator("[data-easydic-scan]").count(), 0);
-  await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: "beginScan" }), tabId);
-  await page.evaluate(() => scrollTo(0, 100));
+  await page.evaluate(() => { document.activeElement?.blur(); getSelection().removeAllRanges(); });
+  await invoke("capture-area"); await dragCanvas();
+  await worker.evaluate(id => chrome.tabs.setZoom(id, 1), tab.id); await page.evaluate(() => scrollTo(0, 0)); await pause(250);
+  await page.evaluate(() => getSelection().removeAllRanges()); await invoke("capture-area");
+  await page.mouse.move(800, 100); await page.mouse.down(); await page.mouse.move(1000, 220, { steps: 5 }); await page.mouse.up();
+  await until(async () => (await panel(page))?.status.includes("No English text found"), "blank image error", 55000);
+  await invoke("capture-area"); await page.evaluate(() => scrollTo(0, 100));
   await until(async () => !await page.locator("[data-easydic-scan]").count(), "scroll cancels scan");
   await page.evaluate(() => scrollTo(0, 0));
-  await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: "beginScan" }), tabId);
-  await page.setViewportSize({ width: 360, height: 650 });
-  await until(async () => !await page.locator("[data-easydic-scan]").count(), "resize cancels scan");
-  await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: "showTranslation", text: "Small viewport." }), tabId);
-  await until(async () => (await panel(page))?.result.includes("Small viewport"), "small viewport");
-  const bounds = await page.locator("[data-easydic-panel]").boundingBox();
-  assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 360);
-  await page.emulateMedia({ colorScheme: "dark" });
-  const colors = await shadow(page, "data-easydic-panel", function () {
-    const style = getComputedStyle(this.querySelector("section"));
-    return { color: style.color, font: style.fontFamily };
-  });
-  assert.equal(colors.color, "rgb(228, 237, 247)");
-  assert.ok(colors.font.includes("system-ui"));
-  await page.screenshot({ path: join(tmpdir(), "easydic-panel-dark.png") });
-  console.log("PASS scan cancellation, small viewport and dark theme");
+  console.log("PASS real local OCR, correction, 125% zoom, blank-image error, and scan cancellation");
 
-  // An extension page cannot host the content script, exercising the popup fallback.
+  // Run viewport emulation after native capture checks: CDP-emulated resizing
+  // does not resize the native tab surface used by captureVisibleTab.
+  await page.setViewportSize({ width: 320, height: 480 });
+  await select(page, "#one"); await invoke();
+  await until(async () => (await panel(page))?.result, "small-screen result");
+  const panelBounds = await page.locator("[data-easydic-panel]").boundingBox();
+  assert.ok(panelBounds.x >= 0 && panelBounds.y >= 0 && panelBounds.x + panelBounds.width <= 320 && panelBounds.y + panelBounds.height <= 480);
+  await page.keyboard.press("Escape");
+
+  // A full-page extension view gives stable screenshots and precise interaction tests.
   const popup = await context.newPage();
+  await popup.setViewportSize({ width: 450, height: 600 });
+  popup.on("pageerror", error => errors.push(error.message));
   await popup.goto(`chrome-extension://${extensionId}/popup.html`);
-  await popup.locator("#dictionary-search-input").fill("Fallback translation.");
+  await until(async () => await popup.locator("#word-card").textContent() === "Legacy", "saved default in extension view");
+  const commands = await worker.evaluate(() => chrome.commands.getAll());
+  assert.equal(await popup.locator("#shortcut-key").textContent(), commands.find(c => c.name === "scan-area").shortcut);
+  assert.equal(await popup.locator("#scan-shortcut-key").textContent(), commands.find(c => c.name === "capture-area").shortcut);
+  assert.equal(await popup.locator('[role="tab"]').count(), 0);
+  assert.equal(await popup.locator("#shortcut-key").isVisible(), false);
+  assert.equal(await popup.locator(".result-card").isVisible(), true);
+  assert.equal(await popup.locator("#translation-result").textContent(), "");
+  assert.equal(await popup.locator("#dictionary-search-input").evaluate(element => element.tagName), "INPUT");
+  await popup.screenshot({ path: join(tmpdir(), "easydic-toolbar-light.png") });
+  await popup.locator("#search-word").click();
+  await until(async () => (await panel(popup, "translation-result"))?.result.includes("Legacy"), "inline saved result");
+  assert.equal((await panel(popup, "translation-result")).source, "Legacy");
+  assert.equal((await panel(popup, "translation-result")).sourceHidden, true);
+  assert.equal((await panel(popup, "translation-result")).save, "Saved ✓");
+  assert.equal((await panel(popup, "translation-result")).removedControls, 0);
+  assert.equal(await popup.evaluate(() => document.activeElement.id), "search-word");
+  await popup.screenshot({ path: join(tmpdir(), "easydic-saved.png") });
+  for (const control of ["next-word", "previous-word", "random-word"]) {
+    await popup.locator(`#${control}`).click();
+    assert.equal((await panel(popup, "translation-result")).hidden, true);
+    assert.equal(await popup.locator(".result-card").isVisible(), true);
+    await popup.locator("#search-word").click();
+    await until(async () => !(await panel(popup, "translation-result"))?.hidden && (await panel(popup, "translation-result"))?.result, "explicit translation after navigation");
+  }
+  await popup.locator("#dictionary-search-input").fill("Hello");
+  await popup.locator("#dictionary-search-input").press("Enter");
+  await until(async () => (await panel(popup, "translation-result"))?.source === "Hello" && (await panel(popup, "translation-result"))?.result, "single-line Enter submits");
+  assert.equal((await panel(popup, "translation-result")).sourceHidden, false);
+  assert.equal(await popup.evaluate(() => document.activeElement.id), "dictionary-search-input");
+  assert.equal(await popup.evaluate(() => document.body.scrollHeight <= document.body.clientHeight + 1 && document.querySelector("main").getBoundingClientRect().height < 590), true);
+  await popup.locator("#next-word").click(); assert.equal((await panel(popup, "translation-result")).hidden, true);
+  let selectedEntry = await popup.locator("#word-card").textContent();
+  await popup.locator("#dictionary-search-input").fill("A word worth remembering.");
   await popup.locator("#dictionary-search-button").click();
-  await until(async () => (await panel(popup))?.result.includes("Fallback translation"), "popup fallback");
-  await popup.locator("#load-words").click();
-  await until(async () => (await popup.locator("#word-card").textContent()) === "Legacy", "load legacy words");
-  console.log("PASS protected-page popup fallback and saved-library loading");
+  await until(async () => (await panel(popup, "translation-result"))?.result.includes("worth remembering"), "typed result");
+  assert.equal((await panel(popup, "translation-result")).source, "A word worth remembering.");
+  assert.equal((await panel(popup, "translation-result")).sourceHidden, false);
+  assert.equal(await popup.evaluate(() => document.activeElement.id), "dictionary-search-button");
+  assert.equal(await popup.locator("[data-easydic-panel]").count(), 1);
+  await click(popup, ".save", "translation-result");
+  await until(async () => (await panel(popup, "translation-result"))?.save === "Saved ✓", "typed persistent save");
+  assert.equal(await popup.locator("#word-card").textContent(), selectedEntry);
+  assert.match(await popup.locator("#word-position").textContent(), /of 4/);
+  assert.equal(await popup.locator("#dictionary-search-input").inputValue(), "A word worth remembering.");
+  await popup.emulateMedia({ colorScheme: "dark" });
+  await popup.screenshot({ path: join(tmpdir(), "easydic-result-dark.png") });
+  await popup.evaluate(() => { document.body.scrollTop = 0; window.scrollTo(0, 0); });
+  await popup.screenshot({ path: join(tmpdir(), "easydic-toolbar-dark.png") });
+  assert.equal(await popup.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await popup.locator("#dictionary-search-input").fill("Slow obsolete popup result.");
+  await popup.locator("#dictionary-search-button").click();
+  await popup.locator("#next-word").click(); await pause(1300);
+  assert.equal((await panel(popup, "translation-result")).hidden, true);
+  assert.equal(await popup.locator("#dictionary-search-input").inputValue(), "Slow obsolete popup result.");
+  selectedEntry = await popup.locator("#word-card").textContent();
+  await popup.locator("#dictionary-search-input").fill("Slow superseded by entry.");
+  await popup.locator("#dictionary-search-button").click();
+  await popup.locator("#search-word").click();
+  await until(async () => (await panel(popup, "translation-result"))?.source === selectedEntry && (await panel(popup, "translation-result"))?.result, "entry replaces typed operation");
+  const entryResult = await panel(popup, "translation-result"); await pause(1300);
+  assert.deepEqual(await panel(popup, "translation-result"), entryResult);
+  await worker.evaluate(() => { failOnce = true; });
+  await popup.locator("#dictionary-search-input").fill("Retry toolbar error.");
+  await popup.locator("#dictionary-search-button").click();
+  await until(async () => (await panel(popup, "translation-result"))?.status.includes("internet"), "inline error");
+  await click(popup, ".retry", "translation-result");
+  await until(async () => (await panel(popup, "translation-result"))?.result.includes("Retry toolbar"), "inline retry");
+  await popup.locator("#dictionary-search-input").fill("Long sentence with punctuation… ".repeat(35));
+  await popup.locator("#dictionary-search-button").click();
+  await until(async () => (await panel(popup, "translation-result"))?.result.includes("Long sentence"), "long inline result");
+  await popup.setViewportSize({ width: 320, height: 480 });
+  assert.equal(await popup.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.body.scrollWidth <= innerWidth), true);
+  await popup.locator("#dictionary-search-input").fill("x".repeat(2001));
+  assert.equal(await popup.locator("#dictionary-search-button").isDisabled(), true);
+  assert.equal((await panel(popup, "translation-result")).hidden, true);
+  await popup.setViewportSize({ width: 450, height: 600 });
+  console.log("PASS equal columns, blank result reservation, Enter search, compact source/result, manual selection, focus retention, navigation, errors/retry, stale cancellation, and narrow/long/dark layouts");
+
   const writes = await popup.evaluate(() => Promise.all([
     chrome.runtime.sendMessage({ target: "background", type: "saveWords", words: ["Concurrent one"] }),
     chrome.runtime.sendMessage({ target: "background", type: "saveWords", words: ["Concurrent two"] })
   ]));
   assert.ok(writes.every(result => result.ok));
-  const saved = await worker.evaluate(async () => (await chrome.storage.local.get("savedWords")).savedWords);
-  assert.ok(saved.includes("Concurrent one") && saved.includes("Concurrent two") && saved.includes("Legacy"));
-  popup.once("dialog", dialog => dialog.accept());
-  await popup.locator("#remove-words").click();
-  await until(async () => (await popup.locator("#action-status").textContent()) === "Saved words cleared", "clear saved library");
-  assert.deepEqual(await worker.evaluate(async () => (await chrome.storage.local.get("savedWords")).savedWords), []);
-  assert.deepEqual((await worker.evaluate(tabId => chrome.tabs.sendMessage(tabId, { type: "getTemporaryWords" }), tabId)).words, ["I am reading an article."]);
-  console.log("PASS simultaneous saves and clear-library/session-deck separation");
-  console.log(`Browser: ${await context.browser()?.version()} · all integration checks passed`);
-} catch (error) {
-  for (const page of context?.pages() || []) {
-    console.error("DIAGNOSTIC", page.url(), await panel(page).catch(() => null));
-    console.error(await page.evaluate(() => ({ selection: getSelection()?.toString(), hosts: document.querySelectorAll("[data-easydic-panel]").length, width: innerWidth, height: innerHeight, dpr: devicePixelRatio, image: document.querySelector("canvas")?.getBoundingClientRect().toJSON() })).catch(() => null));
+  await until(async () => (await popup.locator("#word-position").textContent()).includes("of 6"), "live concurrent updates");
+  assert.equal(await popup.locator("#word-card").textContent(), selectedEntry);
+  await popup.locator("#help-toggle").click();
+  await popup.evaluate(() => {
+    chrome.commands.getAll = async () => [{ name: "scan-area", shortcut: "" }, { name: "capture-area", shortcut: "Alt+Shift+A" }]; window.dispatchEvent(new Event("focus"));
+  });
+  await until(async () => await popup.locator("#shortcut-key").textContent() === "Not assigned", "missing shortcut guidance");
+  assert.equal(await popup.locator("#shortcut-notice").isVisible(), true);
+  await popup.evaluate(() => {
+    chrome.commands.getAll = async () => [{ name: "scan-area", shortcut: "Ctrl+Shift+Y" }, { name: "capture-area", shortcut: "Ctrl+Shift+Z" }]; window.dispatchEvent(new Event("focus"));
+  });
+  await until(async () => await popup.locator("#shortcut-key").textContent() === "Ctrl+Shift+Y", "custom shortcut display");
+  assert.equal(await popup.locator("#shortcut-notice").isVisible(), false);
+  assert.equal(await popup.locator("#scan-shortcut-key").textContent(), "Ctrl+Shift+Z");
+  for (const colorScheme of ["light", "dark"]) {
+    await popup.emulateMedia({ colorScheme });
+    assert.equal(await popup.locator("#help-panel").isVisible(), true);
+    assert.equal(await popup.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.body.scrollWidth <= innerWidth), true);
+    await popup.locator("#help-toggle").scrollIntoViewIfNeeded();
+    await popup.screenshot({ path: join(tmpdir(), `easydic-help-${colorScheme}.png`) });
   }
+  await popup.locator("#help-toggle").click();
+  await popup.evaluate(() => {
+    chrome.commands.getAll = async () => [{ name: "scan-area", shortcut: "Ctrl+Shift+Y" }, { name: "capture-area", shortcut: "" }]; window.dispatchEvent(new Event("focus"));
+  });
+  await until(async () => await popup.locator("#scan-shortcut-key").textContent() === "Not assigned", "missing scan shortcut");
+  assert.match(await popup.locator("#shortcut-notice").textContent(), /Scanning shortcut not assigned/);
+  const libraryBeforeEmpty = await saved();
+  await worker.evaluate(() => chrome.storage.local.set({ savedWords: [] }));
+  await until(async () => await popup.locator("#word-card").textContent() === "No saved entries yet", "empty library");
+  assert.equal(await popup.locator("#search-word").isDisabled(), true);
+  assert.equal(await popup.locator(".result-card").isVisible(), true);
+  await popup.locator("#dictionary-search-input").fill("First saved word");
+  await popup.locator("#dictionary-search-input").press("Enter");
+  await until(async () => (await panel(popup, "translation-result"))?.result.includes("First saved word"), "typed lookup with empty library");
+  await click(popup, ".save", "translation-result");
+  await until(async () => await popup.locator("#word-card").textContent() === "First saved word", "first save populates left column");
+  assert.equal((await panel(popup, "translation-result")).hidden, false);
+  await worker.evaluate(savedWords => chrome.storage.local.set({ savedWords }), libraryBeforeEmpty);
+  await page.reload();
+  assert.ok((await saved()).includes("I am reading an article."));
+  await popup.close();
+  assert.deepEqual(errors, []);
+  const expectedSaved = await saved();
+  console.log("PASS simultaneous saves, shortcut assignment/remapping display, and page-refresh persistence");
+
+  const version = context.browser().version();
+  await context.close();
+  context = await launch();
+  worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
+  const reopened = context.pages()[0] || await context.newPage();
+  await reopened.goto(`chrome-extension://${extensionId}/popup.html`);
+  await until(async () => await reopened.locator("#word-card").textContent() === "Legacy", "library after browser restart");
+  assert.deepEqual(await worker.evaluate(async () => (await chrome.storage.local.get("savedWords")).savedWords), expectedSaved);
+  assert.match(await reopened.locator("#word-position").textContent(), /of 6/);
+  console.log(`PASS browser-restart persistence · ${version} · all integration checks passed`);
+  console.log("Native Windows/Linux shortcut key delivery is NOT verified by this suite.");
+} catch (error) {
+  for (const page of context?.pages() || []) console.error("DIAGNOSTIC", page.url(), await panel(page).catch(() => null));
   console.error("REQUESTS", await context?.serviceWorkers()[0]?.evaluate(() => globalThis.requests).catch(() => null));
-  console.error("CAPTURE", await context?.serviceWorkers()[0]?.evaluate(() => globalThis.captureGeometry).catch(() => null));
-  const screenshot = await context?.serviceWorkers()[0]?.evaluate(() => globalThis.lastCapture).catch(() => null);
-  if (screenshot) await writeFile(join(tmpdir(), "easydic-capture-debug.png"), Buffer.from(screenshot.split(",")[1], "base64"));
   throw error;
 } finally {
   await context?.close();
   await new Promise(resolve => server.close(resolve));
   await rm(profile, { recursive: true, force: true });
+  await rm(testFiles, { recursive: true, force: true });
 }

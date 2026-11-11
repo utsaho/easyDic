@@ -1,20 +1,39 @@
 {
   "manifest_version": 3,
   "name": "EasyDic",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "minimum_chrome_version": "116",
-  "description": "Highlight English text or scan an image area for Bangla translation without leaving your article.",
+  "description": "Translate selected English text or scan an image with a shortcut. Read Bangla translations and save vocabulary locally.",
   "permissions": [
     "storage",
     "activeTab",
     "offscreen"
   ],
-  "host_permissions": ["https://api.mymemory.translated.net/*"],
-  "background": { "service_worker": "background.js", "type": "module" },
+  "host_permissions": [
+    "https://api.mymemory.translated.net/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
   "commands": {
     "scan-area": {
-      "suggested_key": { "default": "Alt+Shift+X" },
-      "description": "Scan an area for English text and translate to Bangla"
+      "suggested_key": {
+        "default": "Alt+Shift+X",
+        "windows": "Alt+Shift+X",
+        "linux": "Alt+Shift+X",
+        "mac": "Alt+Shift+X"
+      },
+      "description": "Translate selected text"
+    },
+    "capture-area": {
+      "suggested_key": {
+        "default": "Alt+Shift+A",
+        "windows": "Alt+Shift+A",
+        "linux": "Alt+Shift+A",
+        "mac": "Alt+Shift+A"
+      },
+      "description": "Scan image area"
     }
   },
   "content_security_policy": {

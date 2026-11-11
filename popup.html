@@ -1,61 +1,61 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>EasyDic</title>
-    <link rel="stylesheet" href="popup.css" />
-  </head>
-  <body>
-    <main>
-      <div class="popup-header">
-        <div class="brand-controls">
-          <h1>EasyDic</h1>
-          <input id="enabled" class="lookup-toggle" type="checkbox" aria-label="Automatically translate highlighted text" title="Automatically translate highlighted text" />
-        </div>
-        <div class="header-actions">
-          <button id="load-words" class="header-icon-button" type="button" aria-label="Load saved words" title="Load saved words">
-            <img src="assets/load-icon.webp" alt="" />
-          </button>
-          <button id="remove-words" class="header-icon-button" type="button" aria-label="Clear saved words" title="Clear saved words">
-            <img src="assets/remove-icon.webp" alt="" />
-          </button>
-        </div>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EasyDic</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header class="app-header">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">অ</span><h1>EasyDic</h1></div>
+      <div class="header-actions"><button id="scan-area" type="button">Scan area</button><button id="help-toggle" class="quiet" type="button" aria-expanded="false" aria-controls="help-panel">Help</button></div>
+    </header>
+    <div id="help-panel" class="help-panel" hidden>
+      <div class="shortcut-hints" aria-label="Keyboard shortcuts">
+        <p><span>Translate selected text</span><kbd id="shortcut-key">…</kbd></p>
+        <p><span>Scan image area</span><kbd id="scan-shortcut-key">…</kbd></p>
+        <p id="shortcut-notice" class="notice" hidden></p>
       </div>
-      <form id="dictionary-search-form" class="dictionary-search" role="search">
-        <input id="dictionary-search-input" class="dictionary-search-input" type="search" placeholder="Translate English text" aria-label="English text to translate" autocomplete="off" />
-        <button id="dictionary-search-button" class="header-icon-button" type="submit" aria-label="Translate to Bangla" title="Translate to Bangla" disabled>
-          <img src="assets/search-icon.webp" alt="" />
-        </button>
-      </form>
-      <button id="scan-area" class="scan-button" type="button">Scan area <span>Alt+Shift+X</span></button>
-      <p class="reading-tip">Highlight text to translate here on the page. Save only what you want to keep.</p>
-      <div id="translation-fallback"></div>
-      <section class="flashcards" aria-labelledby="flashcards-title">
-        <div class="flashcards-header">
-          <h2 id="flashcards-title">Saved from this page</h2>
-          <div class="header-actions">
-            <button id="search-word" class="header-icon-button" type="button" aria-label="Translate the current entry" title="Translate current entry">
-              <img src="assets/search-icon.webp" alt="" />
-            </button>
-            <button id="save-words" class="header-icon-button" type="button" aria-label="Save all words" title="Save all words">
-              <img src="assets/save-button.webp" alt="" />
-            </button>
-          </div>
+      <p><strong>On a webpage</strong><br>Select English text and use the translation shortcut. With nothing selected, it does nothing. Use the separate scan shortcut or Scan area to draw a box around image text.</p>
+      <p><strong>Shortcut not working?</strong><br>In your browser's extension shortcut settings, assign Alt+Shift+X to “Translate selected text” and Alt+Shift+A to “Scan image area”, or choose other available keys.</p>
+      <p class="settings-path">Chrome: chrome://extensions/shortcuts<br>Brave: brave://extensions/shortcuts</p>
+      <p>Refresh the article after reloading EasyDic. Use an ordinary webpage, check competing extensions, and check your system's keyboard shortcuts. A system-reserved shortcut may need to be remapped.</p>
+      <p><strong>Your library</strong><br>Save keeps the English text in this browser profile. Translation does not save automatically. Select result text to copy it using your usual keyboard shortcut or context menu.</p>
+      <p><strong>Translation and image reading</strong><br>English text you translate is sent to MyMemory online. The anonymous free allowance is 5,000 characters per day. Image reading runs locally; screenshots are never uploaded or saved. Use Edit text to correct recognition mistakes.</p>
+    </div>
+    <p id="app-status" class="status" role="status" aria-live="polite"></p>
+    <form id="dictionary-search-form">
+      <label class="field-label" for="dictionary-search-input">English text</label>
+      <div class="search-row"><input id="dictionary-search-input" type="text" placeholder="Enter an English word…" aria-describedby="character-count" autocomplete="off" spellcheck="false"><button id="dictionary-search-button" class="primary" type="submit" disabled>Translate</button></div>
+      <span id="character-count">0 / 2,000</span>
+    </form>
+    <section class="library" aria-label="Saved vocabulary">
+      <div class="library-toolbar">
+        <label class="sr-only" for="library-view">Vocabulary view</label>
+        <select id="library-view"><option value="saved">All saved entries</option><option value="page">This page</option></select>
+        <button id="remove-words" class="quiet danger" type="button">Clear library</button>
+      </div>
+      <div class="review-grid">
+        <div class="word-card">
+          <div class="card-heading"><p class="eyebrow">English</p><span id="word-position" aria-live="polite">0 of 0</span></div>
+          <p id="word-card" aria-live="polite">Loading your library…</p>
+          <p id="empty-hint" class="muted" hidden>Translate a word or sentence, then choose Save.</p>
+          <button id="search-word" class="primary entry-translate" type="button" disabled>Translate entry</button>
         </div>
-        <p id="action-status" class="action-status" role="status" aria-live="polite"></p>
-        <div id="word-card" class="word-card" aria-live="polite">No saved words yet</div>
-        <div class="card-controls">
-          <button id="previous-word" type="button">Prev</button>
-          <button id="random-word" class="random-button" type="button" aria-label="Show a random word" title="Random word">
-            <img src="assets/random-icon.webp" alt="" />
-          </button>
-          <button id="next-word" type="button">Next</button>
-        </div>
-        <div id="word-position" aria-live="polite">0 / 0</div>
-      </section>
-    </main>
-    <script src="panel.js"></script>
-    <script type="module" src="popup.js"></script>
-  </body>
+        <div class="result-card"><div id="translation-result"></div></div>
+      </div>
+      <div class="card-controls">
+        <button id="previous-word" type="button" aria-label="Previous entry">← Previous</button>
+        <button id="random-word" type="button" disabled>Random</button>
+        <button id="next-word" type="button" aria-label="Next entry">Next →</button>
+      </div>
+      <button id="save-words" class="text-button" type="button" hidden>Save this page's entries</button>
+      <p id="action-status" class="status" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="panel.js"></script>
+  <script type="module" src="popup.js"></script>
+</body>
 </html>
