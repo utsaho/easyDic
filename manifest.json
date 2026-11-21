@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "EasyDic",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "minimum_chrome_version": "116",
   "description": "Translate selected English text or scan an image with a shortcut. Read Bangla translations and save vocabulary locally.",
   "permissions": [
@@ -21,7 +21,7 @@
       "suggested_key": {
         "default": "Alt+Shift+X",
         "windows": "Alt+Shift+X",
-        "linux": "Alt+Shift+X",
+        "linux": "Ctrl+Shift+X",
         "mac": "Alt+Shift+X"
       },
       "description": "Translate selected text"
@@ -30,7 +30,7 @@
       "suggested_key": {
         "default": "Alt+Shift+A",
         "windows": "Alt+Shift+A",
-        "linux": "Alt+Shift+A",
+        "linux": "Ctrl+Shift+E",
         "mac": "Alt+Shift+A"
       },
       "description": "Scan image area"

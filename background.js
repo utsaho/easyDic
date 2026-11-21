@@ -5,6 +5,7 @@ const jobs = new Map();
 const scanningTabs = new Map();
 let libraryQueue = Promise.resolve();
 let offscreenCreation;
+let shortcutSequence = 0;
 
 function owner(sender) {
   return sender.documentId || `${sender.tab?.id ?? "popup"}:${sender.frameId ?? 0}`;
@@ -164,19 +165,37 @@ async function invokeShortcut(invokingTab, command = "scan-area") {
   const tab = invokingTab?.id ? invokingTab : (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
   if (!tab?.id) throw new Error("Open an ordinary webpage to use EasyDic.");
   const [active] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
-  if (active?.id !== tab.id) return;
+  if (active?.id !== tab.id) return "tab-changed";
   const result = await chrome.tabs.sendMessage(tab.id, { type: command === "capture-area" ? "beginScan" : "invokeSelection" }, { frameId: 0 });
   if (!result?.ok) throw new Error("Refresh the page after reloading EasyDic.");
   await chrome.action.setBadgeText({ text: "" });
   await chrome.action.setTitle({ title: "EasyDic" });
+  return result.status || "started";
 }
 
-chrome.commands.onCommand.addListener((command, tab) => {
-  if (["scan-area", "capture-area"].includes(command)) invokeShortcut(tab, command).catch(() => {
+async function runShortcut(command, tab) {
+  const sequence = ++shortcutSequence;
+  const at = Date.now();
+  const record = async status => {
+    if (sequence !== shortcutSequence) return;
+    try { await chrome.storage.session.set({ lastShortcut: { command, status, at } }); } catch { /* Diagnostics must not block shortcuts. */ }
+  };
+  await record("received");
+  try {
+    const status = await invokeShortcut(tab, command);
+    await record(status);
+    return status;
+  } catch {
+    await record("unavailable");
     // Protected pages cannot host the panel; the popup explains availability.
     chrome.action.setBadgeText({ text: "!" });
     chrome.action.setTitle({ title: "EasyDic: open an ordinary webpage and refresh it, then try the shortcut again" });
-  });
+    return "unavailable";
+  }
+}
+
+chrome.commands.onCommand.addListener((command, tab) => {
+  if (["scan-area", "capture-area"].includes(command)) runShortcut(command, tab);
 });
 
 chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {

@@ -24,7 +24,6 @@
     return !!element && (element.isContentEditable || !!element.closest("input,textarea,select,[contenteditable]"));
   }
   function selectedText() {
-    if (editable(document.activeElement) || document.activeElement === panel?.host) return "";
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || editable(selection.anchorNode) || editable(selection.focusNode)) return "";
     if (selection.anchorNode?.getRootNode() === panel?.shadow || selection.focusNode?.getRootNode() === panel?.shadow) return "";
@@ -34,9 +33,11 @@
   // Selection itself is entirely native. Only an explicit extension command
   // reads it and starts a translation. Scanning has its own command.
   function invokeSelection() {
-    if (scan || readingImage) return;
+    if (scan || readingImage) return "busy";
     const text = selectedText();
-    if (text) getPanel().translate(text);
+    if (!text) return "no-selection";
+    getPanel().translate(text);
+    return "started";
   }
 
   document.addEventListener("pointerdown", event => {
@@ -126,8 +127,12 @@
       getPanel().translate(message.text);
       respond({ ok: true });
     }
-    if (message?.type === "invokeSelection") { invokeSelection(); respond({ ok: true }); }
-    if (message?.type === "beginScan") { if (!scan && !readingImage) beginScan(); respond({ ok: true }); }
+    if (message?.type === "invokeSelection") respond({ ok: true, status: invokeSelection() });
+    if (message?.type === "beginScan") {
+      const busy = !!scan || readingImage;
+      if (!busy) beginScan();
+      respond({ ok: true, status: busy ? "busy" : "started" });
+    }
     if (message?.type === "cancelScan") { cancelScan(); respond({ ok: true }); }
     if (message?.type === "captureComplete" && readingImage && panel?.operation === message.id) panel.captureComplete();
   });

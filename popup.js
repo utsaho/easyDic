@@ -147,7 +147,31 @@ byId("help-toggle").onclick = () => {
   const expanded = byId("help-panel").hidden;
   byId("help-panel").hidden = !expanded;
   byId("help-toggle").setAttribute("aria-expanded", String(expanded));
+  if (expanded) loadShortcutActivity();
 };
+async function loadShortcutActivity() {
+  const diagnostic = byId("shortcut-diagnostic");
+  try {
+    const { lastShortcut } = await chrome.storage.session.get("lastShortcut");
+    if (!lastShortcut?.at) {
+      diagnostic.textContent = "No shortcut event received in this browser session.";
+      return;
+    }
+    const action = lastShortcut.command === "capture-area" ? "Scan" : "Translate";
+    const outcomes = {
+      received: "received; waiting for the page",
+      started: "received; sent to the page",
+      "no-selection": "received; no selected article text found",
+      busy: "received; an operation is already active",
+      "tab-changed": "received; the active tab changed",
+      unavailable: "received; page unavailable"
+    };
+    const time = new Date(lastShortcut.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    diagnostic.textContent = `${action} at ${time}: ${outcomes[lastShortcut.status] || "received"}.`;
+  } catch {
+    diagnostic.textContent = "Shortcut activity is unavailable.";
+  }
+}
 async function loadShortcut() {
   const bindings = [["scan-area", "shortcut-key", "Translation"], ["capture-area", "scan-shortcut-key", "Scanning"]];
   try {
@@ -167,7 +191,8 @@ async function loadShortcut() {
   }
 }
 loadShortcut();
-window.addEventListener("focus", loadShortcut);
+loadShortcutActivity();
+window.addEventListener("focus", () => { loadShortcut(); loadShortcutActivity(); });
 byId("scan-area").onclick = () => {
   const button = byId("scan-area");
   button.disabled = true;

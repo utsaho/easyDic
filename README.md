@@ -1,6 +1,6 @@
-# EasyDic 2.2
+# EasyDic 2.2.1
 
-Read English articles with Bangla translations without leaving the page. Select a word, phrase, or sentence, then press your EasyDic shortcut (default **Alt+Shift+X**) to translate it in a small bottom-right panel. Selecting, copying, and dragging text alone behave normally and never request a translation. Searches started in the toolbar stay inside the toolbar.
+Read English articles with Bangla translations without leaving the page. Select a word, phrase, or sentence, then press your EasyDic translation shortcut (**Ctrl+Shift+X** on Linux; **Alt+Shift+X** on macOS and Windows) to translate it in a small bottom-right panel. Selecting, copying, and dragging text alone behave normally and never request a translation. Searches started in the toolbar stay inside the toolbar.
 
 ## Install or upgrade in Chrome / Brave
 
@@ -13,13 +13,13 @@ For an upgrade, keep using the same folder and extension, click **Reload** on it
 
 ## Translate while reading
 
-- Select English text with the mouse or keyboard, then press **Alt+Shift+X** (or your assigned shortcut). Selection alone does nothing in EasyDic.
+- Select English text with the mouse or keyboard, then press **Ctrl+Shift+X** on Linux or **Alt+Shift+X** on macOS/Windows (or your assigned shortcut). Selection alone does nothing in EasyDic.
 - The bottom-right panel shows a muted English source and a larger Bangla translation. Translation does not change the article's scroll position or keyboard focus.
 - Click outside the panel, press **Escape**, or use **×** to close it. Clicks inside keep it open. Scrolling keeps completed results visible. A dismissed result cannot reopen when a delayed request finishes.
 - Selecting another passage closes the old result. Press the shortcut again to translate the new selection. Repeating the shortcut for the same pending text does not send duplicate requests.
 - **Save** stores the English source. To copy a translation, select its text and use your usual copy shortcut or context menu. Translation-service and privacy information is available in toolbar **Help**; result views contain no Copy or Information buttons.
 
-Editable fields and selections inside EasyDic are excluded from article-text lookup. Selections can contain up to **2,000 characters**. Longer selections show an error rather than being silently cut off. With no eligible article text selected, **Alt+Shift+X does nothing**, including leaving an existing result unchanged. **Alt+Shift+A** starts scanning independently.
+Editable fields and selections inside EasyDic are excluded from article-text lookup. Selections can contain up to **2,000 characters**. Longer selections show an error rather than being silently cut off. With no eligible article text selected, the translation shortcut does nothing, including leaving an existing result unchanged. The scan shortcut starts scanning independently.
 
 ## Use the toolbar
 
@@ -38,7 +38,7 @@ Ordinary word lookups fit without an outer scrollbar, targeting a content height
 
 ## Scan text in an image
 
-1. Press **Alt+Shift+A** (or your assigned scan shortcut), or open EasyDic and click **Scan area**. Both always scan, even when article text is selected.
+1. Press **Ctrl+Shift+E** on Linux or **Alt+Shift+A** on macOS/Windows (or your assigned scan shortcut), or open EasyDic and click **Scan area**. Both always scan, even when article text is selected.
 2. Drag a box around visible, printed English text in an image or webpage.
 3. EasyDic captures the visible tab, crops the selected region, reads it locally, and translates the extracted text in the bottom-right panel.
 4. If recognition is imperfect, click **Edit text**, correct the English text, and choose **Translate again**.
@@ -49,25 +49,24 @@ Scanning requires an ordinary HTTP/HTTPS webpage with the content script loaded.
 
 ## Shortcut setup and troubleshooting
 
-Toolbar **Help** displays **both actual assigned shortcuts** from the browser, including custom remappings. Defaults on Windows, Linux, and macOS:
+Toolbar **Help** displays **both actual assigned shortcuts** from the browser, including custom remappings. Defaults:
 
-| Shortcut | Action |
-| --- | --- |
-| Alt+Shift+X | Translate selected text; do nothing if no eligible text is selected. |
-| Alt+Shift+A | Scan image area, regardless of selected text. |
+| Action | Linux | macOS / Windows |
+| --- | --- | --- |
+| Translate selected text | Ctrl+Shift+X | Alt+Shift+X |
+| Scan image area | Ctrl+Shift+E | Alt+Shift+A |
 
-The existing `scan-area` command identifier now means **Translate selected text**, retaining its previous X binding or user remapping. The new `capture-area` command handles scanning. Existing assignments are never overwritten. After upgrading, check both displayed bindings; the browser may leave a conflicting or unavailable shortcut unassigned.
+The existing `scan-area` command identifier means **Translate selected text** and `capture-area` handles scanning. Existing assignments are never overwritten. After upgrading on Linux, **open `brave://extensions/shortcuts` and manually replace any old Alt+Shift assignments** with Ctrl+Shift+X and Ctrl+Shift+E. Reload EasyDic and refresh open articles. A browser may also leave a conflicting shortcut unassigned.
 
-If a shortcut shows **Not assigned**, open `chrome://extensions/shortcuts` or `brave://extensions/shortcuts`. Assign Alt+Shift+X to **Translate selected text** and Alt+Shift+A to **Scan image area**, or choose other available keys.
+If a shortcut shows **Not assigned**, open `chrome://extensions/shortcuts` or `brave://extensions/shortcuts` and assign the keys above, or choose other available keys. On Parrot OS, check the desktop's keyboard shortcuts if a combination never reaches Brave. Brave's own custom shortcuts at `brave://settings/system/shortcuts` may also claim the same keys.
 
-If a shortcut is assigned but does nothing:
+Help also shows the **last shortcut event** and time, stored only for the current browser session without selected text. After trying a shortcut on a webpage, reopen Help:
 
-1. Use an ordinary webpage; protected browser pages cannot host the panel or scanner. Use the English text input in the toolbar there.
-2. Reload EasyDic on the extensions page and refresh articles opened before the reload.
-3. Check whether another extension uses the same shortcut.
-4. Check operating-system keyboard shortcuts, including input-language switching. Remap EasyDic if the system intercepts the combination. An extension cannot override a system-reserved shortcut.
+1. If no new event appears, confirm the assigned keys in Brave, then check Brave's own shortcuts, competing extensions, and Parrot OS keyboard shortcuts. Alt+Shift may switch input language on Linux.
+2. If it says **no selected article text found**, select text on an ordinary webpage and retry. Editable fields and embedded frames are excluded.
+3. If it says **page unavailable**, reload EasyDic and refresh the article. Protected browser pages cannot host the panel or scanner; use the toolbar's English input there.
 
-**Scan area** is also available in the toolbar. Both shortcuts use the browser Commands API, which grants temporary tab access for capture; there is no page-level listener pretending to handle the browser shortcut. Explicit platform declarations do not resolve browser or OS conflicts by themselves. See [Chrome Commands](https://developer.chrome.com/docs/extensions/reference/api/commands) and [activeTab](https://developer.chrome.com/docs/extensions/develop/concepts/activeTab).
+**Scan area** is also available in the toolbar. Both shortcuts use the browser Commands API, which grants temporary tab access for capture; there is no page-level listener pretending to handle the browser shortcut. Browser or OS conflicts can still prevent delivery, and a system-reserved shortcut cannot be overridden. See [Chrome Commands](https://developer.chrome.com/docs/extensions/reference/api/commands) and [activeTab](https://developer.chrome.com/docs/extensions/develop/concepts/activeTab).
 
 ## Save vocabulary explicitly
 
@@ -110,8 +109,8 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-The unit suite checks UTF-8 chunking, input limits, vocabulary compatibility, request deduplication, cache persistence/eviction, partial retries, and errors. The browser suite uses an isolated profile and a local article, with mocked translation responses and real bundled OCR, so it does not consume the translation allowance. It exercises passive selection, separate translation/scanning command routing, no-selection behavior, real toolbar lookups staying inline, shared result sources, saved-entry navigation, manual result selection, save failures and retries, concurrent writes, page-refresh/browser-restart persistence, scan capture, OCR correction, cancellation, and equal-width light/dark cards with empty libraries, Enter submission, no outer scrollbar for ordinary words, narrow viewports, and long results. A disposable extension copy exposes the production command router to the tests; translation responses are mocked, while capture and OCR are real. Set `BROWSER_EXECUTABLE` to a compatible Chrome for Testing or Brave executable to test a particular browser; `HEADED=1` enables a visible test window. It never uses your normal browser profile.
+The unit suite checks UTF-8 chunking, input limits, vocabulary compatibility, request deduplication, cache persistence/eviction, partial retries, and errors. The browser suite uses an isolated profile and a local article, with mocked translation responses and real bundled OCR, so it does not consume the translation allowance. It exercises passive selection, separate translation/scanning command routing, no-selection behavior, real toolbar lookups staying inline, shared result sources, saved-entry navigation, manual result selection, save failures and retries, concurrent writes, page-refresh/browser-restart persistence, scan capture, OCR correction, cancellation, and equal-width light/dark cards with empty libraries, Enter submission, no outer scrollbar for ordinary words, narrow viewports, and long results. It also checks selected text when an input retains focus and the session-only shortcut diagnostic. A disposable extension copy exposes the production command router to the tests; translation responses are mocked, while capture and OCR are real. Set `BROWSER_EXECUTABLE` to a compatible Chrome for Testing or Brave executable to test a particular browser; `HEADED=1` enables a visible test window. It never uses your normal browser profile.
 
-**Native shortcut delivery on Windows and Linux remains unverified in this macOS workspace.** Routing tests and simulated browser input do not establish that Alt+Shift+X or Alt+Shift+A reaches Chrome or Brave on those platforms. Actual keypress checks on each OS/browser are still required.
+**Native shortcut delivery on Parrot OS remains unverified in this macOS workspace.** Routing tests and simulated browser input do not establish that Ctrl+Shift+X or Ctrl+Shift+E reaches Brave on Linux. Actual keypress checks on Parrot OS Brave are still required.
 
 Third-party versions, license notices, and checksums are in `vendor/ocr/`. See `THIRD_PARTY_NOTICES.md` for attribution.

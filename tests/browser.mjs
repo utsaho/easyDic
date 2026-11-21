@@ -12,7 +12,7 @@ await cp(resolve(import.meta.dirname, ".."), extension, { recursive: true,
   filter: path => !/(?:^|\/)(?:node_modules|\.git|\.agents|\.codex)(?:\/|$)/.test(path) });
 // Expose the production router only in the disposable test copy. Service workers
 // prohibit dynamic imports, and native OS shortcut delivery needs a separate test.
-await appendFile(join(extension, "background.js"), "\nglobalThis.testInvokeShortcut = invokeShortcut;\n");
+await appendFile(join(extension, "background.js"), "\nglobalThis.testInvokeShortcut = invokeShortcut;\nglobalThis.testRunShortcut = runShortcut;\n");
 const profile = await mkdtemp(join(tmpdir(), "easydic-browser-"));
 const fixture = `<!doctype html><html><head><title>Reading fixture</title><style>
 body{font:20px/1.8 system-ui;margin:40px;background:#fff;color:#111}p{max-width:620px}canvas{display:block;border:1px solid #aaa}.space{height:1500px}
@@ -134,7 +134,13 @@ try {
   }, "content script ready");
   // Calls the production command router. Does NOT claim to simulate OS key delivery.
   const invoke = (command = "scan-area") => worker.evaluate(({ tab, command }) => testInvokeShortcut(tab, command), { tab, command });
+  const deliver = (command = "scan-area") => worker.evaluate(({ tab, command }) => testRunShortcut(command, tab), { tab, command });
   const saved = () => worker.evaluate(async () => (await chrome.storage.local.get("savedWords")).savedWords);
+  assert.deepEqual(await worker.evaluate(() => {
+    const commands = chrome.runtime.getManifest().commands;
+    return [commands["scan-area"].suggested_key.linux, commands["capture-area"].suggested_key.linux,
+      commands["scan-area"].suggested_key.mac, commands["capture-area"].suggested_key.mac];
+  }), ["Ctrl+Shift+X", "Ctrl+Shift+E", "Alt+Shift+X", "Alt+Shift+A"]);
 
   await select(page, "#one"); await pause(500);
   assert.equal(await page.locator("[data-easydic-panel]").count(), 0);
@@ -179,6 +185,23 @@ try {
   assert.equal((await saved()).length, 3);
   console.log("PASS shared local saving, write failure/retry, Saving/Saved feedback, and duplicate recognition");
 
+  await page.locator("input").focus();
+  await page.evaluate(() => {
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("#two"));
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+  });
+  assert.equal(await page.evaluate(() => document.activeElement.tagName), "INPUT");
+  assert.equal(await deliver(), "started");
+  await until(async () => (await panel(page))?.result.includes("different meaning"), "article selection after input focus");
+  assert.equal((await worker.evaluate(async () => (await chrome.storage.session.get("lastShortcut")).lastShortcut.status)), "started");
+  await page.locator("input").evaluate(input => input.select());
+  assert.equal(await deliver(), "no-selection");
+  assert.equal((await worker.evaluate(async () => (await chrome.storage.session.get("lastShortcut")).lastShortcut.status)), "no-selection");
+  await page.evaluate(() => { document.activeElement?.blur(); getSelection().removeAllRanges(); });
+  console.log("PASS article selection after input focus, editable exclusion, and shortcut diagnostic");
+
   await select(page, "#slow"); await invoke(); await invoke(); await invoke();
   assert.equal(await page.locator("[data-easydic-panel]").count(), 1);
   await until(async () => (await worker.evaluate(() => requests)).includes("Slow translation."), "pending request");
@@ -220,6 +243,9 @@ try {
   await page.keyboard.press("Escape"); await invoke();
   assert.equal(await page.locator("[data-easydic-scan]").count(), 0);
   assert.equal((await panel(page)).hidden, true);
+  assert.equal(await deliver("capture-area"), "started");
+  assert.equal((await worker.evaluate(async () => (await chrome.storage.session.get("lastShortcut")).lastShortcut.status)), "started");
+  await page.keyboard.press("Escape");
   console.log("PASS separate command routing: X without selection does nothing; A scans with or without selection");
 
   // Exercise an actual toolbar popup while an ordinary article is active.
@@ -328,6 +354,7 @@ try {
   const commands = await worker.evaluate(() => chrome.commands.getAll());
   assert.equal(await popup.locator("#shortcut-key").textContent(), commands.find(c => c.name === "scan-area").shortcut);
   assert.equal(await popup.locator("#scan-shortcut-key").textContent(), commands.find(c => c.name === "capture-area").shortcut);
+  assert.match(await popup.locator("#shortcut-diagnostic").textContent(), /Scan at .*received; sent to the page/);
   assert.equal(await popup.locator('[role="tab"]').count(), 0);
   assert.equal(await popup.locator("#shortcut-key").isVisible(), false);
   assert.equal(await popup.locator(".result-card").isVisible(), true);
