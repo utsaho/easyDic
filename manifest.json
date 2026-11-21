@@ -7,8 +7,7 @@
   "permissions": [
     "storage",
     "activeTab",
-    "offscreen",
-    "tts"
+    "offscreen"
   ],
   "host_permissions": [
     "https://api.mymemory.translated.net/*"

@@ -12,8 +12,11 @@ let speech = null;
 
 function stopSpeech() {
   if (!speech) return;
+  const previous = speech;
   speech = null;
-  chrome.tts.stop();
+  previous.controller.abort();
+  try { previous.port.postMessage({ status: "stopped" }); } catch { /* Source already closed. */ }
+  chrome.runtime.sendMessage({ target: "offscreen", type: "stopPronunciation", id: previous.id }).catch(() => {});
 }
 function checkGeneration(generation) {
   if (!EasyDicState.enabled || generation !== featureGeneration) throw new Error("EasyDic is off or the operation was cancelled.");
@@ -43,21 +46,18 @@ chrome.runtime.onConnect.addListener(port => {
       if (disconnected) return;
       const text = validateText(message.text);
       stopSpeech();
-      request = { port, tabId: port.sender.tab?.id };
+      request = { port, tabId: port.sender.tab?.id, id: crypto.randomUUID(), controller: new AbortController() };
       speech = request;
-      const voices = (await chrome.tts.getVoices()).filter(voice => !voice.remote && /^en(?:-|$)/i.test(voice.lang || ""));
-      if (disconnected || speech !== request || !EasyDicState.enabled) return;
-      const voice = voices.find(voice => voice.lang.toLowerCase() === "en-us") || voices[0];
-      if (!voice) throw new Error("No local English voice is available. Install an English speech voice in your system settings, then try again.");
-      await chrome.tts.speak(text, {
-        voiceName: voice.voiceName, lang: voice.lang, ...(voice.extensionId ? { extensionId: voice.extensionId } : {}),
-        rate: 1, enqueue: false,
-        onEvent(event) {
-          if (speech !== request) return;
-          if (event.type === "error" && !disconnected) port.postMessage({ error: "Could not play pronunciation. Check your English speech voice and try again." });
-          if (["end", "error", "interrupted", "cancelled"].includes(event.type)) speech = null;
-        }
-      });
+      port.postMessage({ status: "loading" });
+      await ensureOffscreen();
+      request.controller.signal.throwIfAborted();
+      const result = await chrome.runtime.sendMessage({ target: "offscreen", type: "playPronunciation", id: request.id, text });
+      request.controller.signal.throwIfAborted();
+      if (!result?.ok) throw new Error(result?.error || "Could not play pronunciation. Try again.");
+      if (speech === request) {
+        speech = null;
+        port.postMessage({ status: "ended" });
+      }
     } catch (error) {
       if (request && speech !== request) return;
       if (speech === request) speech = null;
@@ -84,10 +84,11 @@ function editLibrary(edit) {
 async function ensureOffscreen() {
   if (offscreenCreation) return offscreenCreation;
   offscreenCreation = (async () => {
-    if (!await chrome.offscreen.hasDocument()) {
+    const contexts = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [chrome.runtime.getURL("offscreen.html")] });
+    if (!contexts.length) {
       await chrome.offscreen.createDocument({
-        url: "offscreen.html", reasons: ["WORKERS", "BLOBS"],
-        justification: "Read selected screenshot text locally with OCR and canvas cropping."
+        url: "offscreen.html", reasons: ["WORKERS", "BLOBS", "AUDIO_PLAYBACK"],
+        justification: "Read selected screenshots and synthesize English pronunciation locally, then play the requested audio."
       });
     }
   })().finally(() => { offscreenCreation = null; });
@@ -217,7 +218,13 @@ async function handle(message, sender) {
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id === chrome.runtime.id && sender.url === chrome.runtime.getURL("offscreen.html") &&
-      message?.target === "background" && message.type === "ocrHeartbeat") {
+      message?.target === "background" && ["pronunciationPlaying", "pronunciationProgress"].includes(message.type)) {
+    if (speech?.id === message.id) speech.port.postMessage({ status: message.type === "pronunciationPlaying" ? "playing" : message.status });
+    respond({ ok: true });
+    return;
+  }
+  if (sender.id === chrome.runtime.id && sender.url === chrome.runtime.getURL("offscreen.html") &&
+      message?.target === "background" && ["ocrHeartbeat", "pronunciationHeartbeat"].includes(message.type)) {
     respond({ ok: true });
     return;
   }

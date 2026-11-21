@@ -17,7 +17,7 @@ let resultPanel;
 let resultOrigin;
 let toggleBusy = false;
 const toggle = byId("extension-toggle");
-const wordSpeaker = new EasyDicSpeaker(byId("word-speaker"), currentWord, message => setStatus(status, message, !!message));
+const wordSpeaker = new EasyDicSpeaker(byId("word-speaker"), currentWord, byId("word-speech-status"));
 function renderFeatures() {
   const enabled = EasyDicState.enabled;
   toggle.textContent = enabled ? "On" : "Off";

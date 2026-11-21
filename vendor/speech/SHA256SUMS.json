@@ -1,0 +1,12 @@
+{
+  "espeak.js": "242e275aac00bc3f10485bf218a17b4210d549453157081b3153b4a4ef64a932",
+  "espeak.wasm": "a7acac5d3f69b5e90715de08bd602193ab992e03a03efd2f55f2558ea0854c7b",
+  "espeak.data": "6ac3357a77f0d2a208ab2471e26a6d87dfc4e5b730a51168eee0ce2d686e437d",
+  "COPYING": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+  "EMSCRIPTEN-LICENSE": "620a78084fc7ca97c0b5dea9abf891f3ffcadfdbf305276f099c9c4e12fc1d86",
+  "source/speech.c": "045c3cf925a818aff824ef3cb2b6fd0a5824aef8a66fb41e4443bfd57b4ec1ac",
+  "source/build.sh": "87aa5885f031d3901e8e91f8baefe9e30bed46efcde333027604c576ff8e7797",
+  "source/espeak-ng-1.52.0.tar.gz": "bb4338102ff3b49a81423da8a1a158b420124b055b60fa76cfb4b18677130a23",
+  "MUSL-COPYRIGHT": "b870108ec5e7790e9f9919064f1b9421d62d5f9b0e6c230c6adf7ea2da62e97b",
+  "COMPILER-RT-LICENSE": "1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d"
+}

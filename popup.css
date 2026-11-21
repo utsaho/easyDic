@@ -65,3 +65,5 @@ select { min-width:0; max-width:100%; min-height:40px; border:1px solid var(--li
   button:hover:not(:disabled) { background:#354962; } .brand-mark { background:#2b4161; }
   .status.error,#character-count.error,.danger { color:#ffb4ab; } .shortcut-hints .notice { color:#ffd0a8; }
 }
+
+.word-card .speech-status:not(:empty) { margin-bottom:12px; }

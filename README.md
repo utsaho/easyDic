@@ -23,9 +23,13 @@ Editable fields and selections inside EasyDic are excluded from article-text loo
 
 ## Hear English pronunciation
 
-Click the speaker beside English text in a page result, toolbar search result, or saved vocabulary card to hear the full word, phrase, or sentence. Clicking or selecting the result text does not start speech. Click the speaker again to replay from the beginning. Closing or changing the source result, navigating saved entries, or closing its page/toolbar stops that pronunciation.
+Click the speaker beside English text in a page result, toolbar search result, or saved vocabulary card to pronounce **words, phrases, or sentences offline**. Clicking or selecting result text does not start audio. Click the speaker again to replay. Closing or changing the source result, navigating saved entries, or closing its page/toolbar stops speech.
 
-Pronunciation uses a local English speech voice through the browser, preferring US English at normal speed. No external speech service is used. If no local English voice is available, install one through your operating system's speech settings and try again. A speech error leaves the translation available.
+EasyDic bundles an **eSpeak NG US English voice**, running locally in the browser at 175 words per minute. **No internet connection, system speech packages, installed voices, special browser flags, account, or API key are needed for pronunciation.** It uses normal browser audio output, independently of Parrot OS's system voice integration. Reload EasyDic and refresh open webpages after upgrading.
+
+The compact voice sounds robotic. It handles text beyond a dictionary's recording catalog, but unusual words, abbreviations, and names may be mispronounced. Capitalization and punctuation are preserved; whitespace is normalized. The same 2,000-character limit applies. Loading, synthesis, and playback failures appear beside the speaker, separately from translation; click again to retry.
+
+Pronunciation text and audio stay in temporary memory on your device. The engine loads on the first click, runs in its own worker, and releases that worker after 60 seconds idle. There is no persistent audio cache. **Bangla translation still requires internet access** for uncached text.
 
 ## Turn EasyDic on or off
 
@@ -103,17 +107,16 @@ References: [API specification](https://mymemory.translated.net/doc/spec.php), [
 ## Permissions and implementation
 
 - `storage`: persistent vocabulary, the On / Off preference, and temporary translation cache.
-- `tts`: pronunciation using local English speech voices.
 - `activeTab`: user-invoked visible-tab capture for scanning.
-- `offscreen`: a hidden extension document for local OCR and image cropping; it opens no visible window or tab.
+- `offscreen`: a hidden extension document for local OCR, image cropping, and pronunciation playback; it opens no visible window or tab.
 - `https://api.mymemory.translated.net/*`: translation requests from the background service worker.
 - Content scripts run on ordinary HTTP/HTTPS top-level documents. OCR can capture visible embedded image/text regions, but shortcut lookup of selections inside nested frames is not supported.
 
-The extension uses Manifest V3 and plain JavaScript. `controls.js` shares enabled state and speaker controls, `content.js` handles selection and scanning, `panel.js` provides the shared translation interface, `background.js` coordinates messaging and storage, `translation.js` handles translation/chunking/cache, and `offscreen.js` runs OCR. No hosted backend is required. Minimum declared Chromium version: 116; use a current desktop Chrome or Brave release.
+The extension uses Manifest V3 and plain JavaScript. `controls.js` shares enabled state and speaker controls, `content.js` handles selection and scanning, `panel.js` provides the shared translation interface, `background.js` coordinates messaging and storage, `translation.js` handles translation/chunking/cache, `speech.js` manages the offline engine, `speech-worker.js` synthesizes PCM, `offscreen.js` runs OCR, and `audio.js` plays generated WAV audio in the shared offscreen document. No hosted backend is required. Minimum declared Chromium version: 116; use a current desktop Chrome or Brave release.
 
 ## Development and checks
 
-After source edits, reload the extension and refresh test pages. Runtime OCR files are already bundled; development dependencies are only needed for browser tests.
+After source edits, reload the extension and refresh test pages. Runtime OCR and speech files are already bundled; development dependencies are only needed for browser tests.
 
 ```sh
 npm test
@@ -122,10 +125,12 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-The unit suite also verifies request cancellation and safe retries after disabling. The browser suite verifies speaker-only pronunciation with mocked speech, voice failures, replay and cancellation, persistent enabled state, disabled entry points, failed setting writes, and late responses. Actual audible output still needs a manual check with an installed local English voice.
+The pronunciation unit tests verify WAV encoding, input validation, lazy initialization, worker reuse, idle cleanup, timeouts, cancellation during initialization/synthesis, stale messages, and recovery. The browser suite uses real generated speech and checks replay, completion, cancellation, persistent enabled state, failed setting writes, and late responses. It also checks OCR continuing beyond the offscreen audio idle window.
+
+`npm run test:pronunciation:offline` synthesizes a broad corpus of words, contractions, hyphens, abbreviations, numbers, names, sentences, and near-limit text with browser networking disabled. It checks non-silent PCM and real speaker playback through completion. These checks establish audio generation, not pronunciation accuracy. Parrot OS audible output still needs checking on that system; automated tests cannot confirm the user's physical speakers.
 
 The unit suite checks UTF-8 chunking, input limits, vocabulary compatibility, request deduplication, cache persistence/eviction, partial retries, and errors. The browser suite uses an isolated profile and a local article, with mocked translation responses and real bundled OCR, so it does not consume the translation allowance. It exercises passive selection, separate translation/scanning command routing, no-selection behavior, real toolbar lookups staying inline, shared result sources, saved-entry navigation, manual result selection, save failures and retries, concurrent writes, page-refresh/browser-restart persistence, scan capture, OCR correction, cancellation, and equal-width light/dark cards with empty libraries, Enter submission, no outer scrollbar for ordinary words, narrow viewports, and long results. It also checks selected text when an input retains focus and the session-only shortcut diagnostic. A disposable extension copy exposes the production command router to the tests; translation responses are mocked, while capture and OCR are real. Set `BROWSER_EXECUTABLE` to a compatible Chrome for Testing or Brave executable to test a particular browser; `HEADED=1` enables a visible test window. It never uses your normal browser profile.
 
 **Native shortcut delivery on Parrot OS remains unverified in this macOS workspace.** Routing tests and simulated browser input do not establish that Ctrl+Shift+X or Ctrl+Shift+E reaches Brave on Linux. Actual keypress checks on Parrot OS Brave are still required.
 
-Third-party versions, license notices, and checksums are in `vendor/ocr/`. See `THIRD_PARTY_NOTICES.md` for attribution.
+Third-party versions, license notices, and checksums are in `vendor/ocr/` and `vendor/speech/`. The speech engine includes GPLv3 source and build instructions in `vendor/speech/README.md`. See `THIRD_PARTY_NOTICES.md` for attribution.

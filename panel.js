@@ -76,7 +76,7 @@
           <span class="announcement" role="status" aria-live="polite"></span>
         </div></section>`;
       this.el = Object.fromEntries(["close", "source", "source-block", "editor", "again", "translation", "result-label", "status", "save", "edit", "retry", "announcement"].map(name => [name, this.shadow.querySelector(`.${name}`)]));
-      this.speaker = new EasyDicSpeaker(this.shadow.querySelector(".speaker"), () => this.text, message => { this.shadow.querySelector(".speech-status").textContent = message; });
+      this.speaker = new EasyDicSpeaker(this.shadow.querySelector(".speaker"), () => this.text, this.shadow.querySelector(".speech-status"));
       EasyDicState.subscribe(enabled => { if (!enabled) this.close(); });
       this.editor = this.shadow.querySelector("textarea");
       this.el.close.onclick = () => this.close();
