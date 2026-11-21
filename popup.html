@@ -10,7 +10,7 @@
   <main>
     <header class="app-header">
       <div class="brand"><span class="brand-mark" aria-hidden="true">অ</span><h1>EasyDic</h1></div>
-      <div class="header-actions"><button id="scan-area" type="button">Scan area</button><button id="help-toggle" class="quiet" type="button" aria-expanded="false" aria-controls="help-panel">Help</button></div>
+      <div class="header-actions"><button id="extension-toggle" class="power-toggle" type="button" role="switch" aria-checked="false" aria-label="Enable EasyDic" disabled>Off</button><button id="scan-area" type="button">Scan area</button><button id="help-toggle" class="quiet" type="button" aria-expanded="false" aria-controls="help-panel">Help</button></div>
     </header>
     <div id="help-panel" class="help-panel" hidden>
       <div class="shortcut-hints" aria-label="Keyboard shortcuts">
@@ -23,6 +23,7 @@
       <p><strong>Shortcut not working?</strong><br>On Linux, assign Ctrl+Shift+X to translate and Ctrl+Shift+E to scan. On macOS and Windows, the defaults remain Alt+Shift+X and Alt+Shift+A. Existing assignments may need changing manually after an upgrade.</p>
       <p class="settings-path">Chrome extension keys: chrome://extensions/shortcuts<br>Brave extension keys: brave://extensions/shortcuts<br>Brave browser keys: brave://settings/system/shortcuts</p>
       <p>Try a shortcut on an ordinary webpage, then reopen Help. If no new event appears, check Brave's shortcut settings, other extensions, and your desktop's keyboard shortcuts. If Brave received it but the page was unavailable, reload EasyDic and refresh the article. A system-reserved shortcut may need remapping.</p>
+      <p><strong>Pronunciation and On / Off</strong><br>Click the speaker beside English text to hear it using a local English voice. Click again to replay. If no English voice is available, install one in your system speech settings. The header switch pauses translation, scanning, and speech across all tabs; your saved library stays available. Your choice is remembered.</p>
       <p><strong>Your library</strong><br>Save keeps the English text in this browser profile. Translation does not save automatically. Select result text to copy it using your usual keyboard shortcut or context menu.</p>
       <p><strong>Translation and image reading</strong><br>English text you translate is sent to MyMemory online. The anonymous free allowance is 5,000 characters per day. Image reading runs locally; screenshots are never uploaded or saved. Use Edit text to correct recognition mistakes.</p>
     </div>
@@ -41,7 +42,7 @@
       <div class="review-grid">
         <div class="word-card">
           <div class="card-heading"><p class="eyebrow">English</p><span id="word-position" aria-live="polite">0 of 0</span></div>
-          <p id="word-card" aria-live="polite">Loading your library…</p>
+          <div class="word-source"><p id="word-card" aria-live="polite">Loading your library…</p><button id="word-speaker" class="speaker" type="button" disabled></button></div>
           <p id="empty-hint" class="muted" hidden>Translate a word or sentence, then choose Save.</p>
           <button id="search-word" class="primary entry-translate" type="button" disabled>Translate entry</button>
         </div>
@@ -56,6 +57,7 @@
       <p id="action-status" class="status" role="status" aria-live="polite"></p>
     </section>
   </main>
+  <script src="controls.js"></script>
   <script src="panel.js"></script>
   <script type="module" src="popup.js"></script>
 </body>

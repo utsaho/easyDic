@@ -9,7 +9,7 @@ Read English articles with Bangla translations without leaving the page. Select 
 3. Choose this folder (containing `manifest.json`) and pin EasyDic in the browser toolbar.
 4. Refresh webpages that were already open before installation.
 
-For an upgrade, keep using the same folder and extension, click **Reload** on its extension card, and refresh webpages. Existing saved words remain intact. The old automatic-translation preference is ignored; the obsolete checkbox has been removed. Do not uninstall to upgrade: uninstalling removes the extension's saved data. No Node.js installation, compilation, API key, or account is needed to use the extension.
+For an upgrade, keep using the same folder and extension, click **Reload** on its extension card, and refresh webpages. Existing saved words remain intact. The old automatic-translation preference is still ignored. The new On / Off switch has its own setting and starts On after an upgrade. Do not uninstall to upgrade: uninstalling removes the extension's saved data. No Node.js installation, compilation, API key, or account is needed to use the extension.
 
 ## Translate while reading
 
@@ -20,6 +20,18 @@ For an upgrade, keep using the same folder and extension, click **Reload** on it
 - **Save** stores the English source. To copy a translation, select its text and use your usual copy shortcut or context menu. Translation-service and privacy information is available in toolbar **Help**; result views contain no Copy or Information buttons.
 
 Editable fields and selections inside EasyDic are excluded from article-text lookup. Selections can contain up to **2,000 characters**. Longer selections show an error rather than being silently cut off. With no eligible article text selected, the translation shortcut does nothing, including leaving an existing result unchanged. The scan shortcut starts scanning independently.
+
+## Hear English pronunciation
+
+Click the speaker beside English text in a page result, toolbar search result, or saved vocabulary card to hear the full word, phrase, or sentence. Clicking or selecting the result text does not start speech. Click the speaker again to replay from the beginning. Closing or changing the source result, navigating saved entries, or closing its page/toolbar stops that pronunciation.
+
+Pronunciation uses a local English speech voice through the browser, preferring US English at normal speed. No external speech service is used. If no local English voice is available, install one through your operating system's speech settings and try again. A speech error leaves the translation available.
+
+## Turn EasyDic on or off
+
+Use **On / Off** in the toolbar header to pause or resume EasyDic across all tabs in this browser profile. Off disables both shortcuts, scanning, toolbar translation, and pronunciation. It closes results and scan selectors, cancels pending requests, and stops speech. Already-running OCR may finish internally, but its result is discarded. Saved vocabulary browsing, library management, and Help remain available.
+
+The setting survives popup reopening and browser restarts. Turning On works on already-loaded webpages without refreshing them and does not restart cancelled work. This pauses EasyDic's features; the extension stays installed and the toolbar remains accessible.
 
 ## Use the toolbar
 
@@ -90,13 +102,14 @@ References: [API specification](https://mymemory.translated.net/doc/spec.php), [
 
 ## Permissions and implementation
 
-- `storage`: persistent vocabulary and temporary translation cache.
+- `storage`: persistent vocabulary, the On / Off preference, and temporary translation cache.
+- `tts`: pronunciation using local English speech voices.
 - `activeTab`: user-invoked visible-tab capture for scanning.
 - `offscreen`: a hidden extension document for local OCR and image cropping; it opens no visible window or tab.
 - `https://api.mymemory.translated.net/*`: translation requests from the background service worker.
 - Content scripts run on ordinary HTTP/HTTPS top-level documents. OCR can capture visible embedded image/text regions, but shortcut lookup of selections inside nested frames is not supported.
 
-The extension uses Manifest V3 and plain JavaScript. `content.js` handles selection and scanning, `panel.js` provides the shared translation interface, `background.js` coordinates messaging and storage, `translation.js` handles translation/chunking/cache, and `offscreen.js` runs OCR. No hosted backend is required. Minimum declared Chromium version: 116; use a current desktop Chrome or Brave release.
+The extension uses Manifest V3 and plain JavaScript. `controls.js` shares enabled state and speaker controls, `content.js` handles selection and scanning, `panel.js` provides the shared translation interface, `background.js` coordinates messaging and storage, `translation.js` handles translation/chunking/cache, and `offscreen.js` runs OCR. No hosted backend is required. Minimum declared Chromium version: 116; use a current desktop Chrome or Brave release.
 
 ## Development and checks
 
@@ -108,6 +121,8 @@ npm install --ignore-scripts
 npx playwright install chromium
 npm run test:browser
 ```
+
+The unit suite also verifies request cancellation and safe retries after disabling. The browser suite verifies speaker-only pronunciation with mocked speech, voice failures, replay and cancellation, persistent enabled state, disabled entry points, failed setting writes, and late responses. Actual audible output still needs a manual check with an installed local English voice.
 
 The unit suite checks UTF-8 chunking, input limits, vocabulary compatibility, request deduplication, cache persistence/eviction, partial retries, and errors. The browser suite uses an isolated profile and a local article, with mocked translation responses and real bundled OCR, so it does not consume the translation allowance. It exercises passive selection, separate translation/scanning command routing, no-selection behavior, real toolbar lookups staying inline, shared result sources, saved-entry navigation, manual result selection, save failures and retries, concurrent writes, page-refresh/browser-restart persistence, scan capture, OCR correction, cancellation, and equal-width light/dark cards with empty libraries, Enter submission, no outer scrollbar for ordinary words, narrow viewports, and long results. It also checks selected text when an input retains focus and the session-only shortcut diagnostic. A disposable extension copy exposes the production command router to the tests; translation responses are mocked, while capture and OCR are real. Set `BROWSER_EXECUTABLE` to a compatible Chrome for Testing or Brave executable to test a particular browser; `HEADED=1` enables a visible test window. It never uses your normal browser profile.
 

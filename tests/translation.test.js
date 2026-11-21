@@ -87,3 +87,29 @@ test("quota, malformed response, HTTP failure, timeout and cancellation are acti
   controller.abort();
   await assert.rejects(new Translator({ fetcher: () => assert.fail("Should not fetch") }).translate("test", controller.signal), /abort/i);
 });
+
+test("disabling aborts requests, ignores late responses, and allows an immediate fresh request", async () => {
+  const calls = [];
+  const cache = storage();
+  const translator = new Translator({ storage: cache, fetcher: (url, { signal }) => new Promise(resolve => {
+    calls.push({ signal, resolve });
+  }) });
+  await translator.ready;
+  const old = translator.translate("Hello");
+  await new Promise(resolve => setImmediate(resolve));
+  translator.cancelAll();
+  assert.equal(calls[0].signal.aborted, true);
+  const fresh = translator.translate("Hello");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.length, 2);
+  const rejected = assert.rejects(old, /Cancelled/);
+  calls[0].resolve(success("obsolete"));
+  await rejected;
+  assert.equal(translator.cache.has("Hello"), false);
+  const duplicate = translator.translate("Hello");
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.length, 2);
+  calls[1].resolve(success("fresh"));
+  assert.deepEqual(await Promise.all([fresh, duplicate]), ["fresh", "fresh"]);
+  assert.deepEqual(cache.data.translationCache, [["Hello", "fresh"]]);
+});

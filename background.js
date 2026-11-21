@@ -1,3 +1,4 @@
+import "./controls.js";
 import { Translator, mergeWords, validateText } from "./translation.js";
 
 const translator = new Translator({ storage: chrome.storage.session, fetcher: (...args) => fetch(...args) });
@@ -6,6 +7,64 @@ const scanningTabs = new Map();
 let libraryQueue = Promise.resolve();
 let offscreenCreation;
 let shortcutSequence = 0;
+let featureGeneration = 0;
+let speech = null;
+
+function stopSpeech() {
+  if (!speech) return;
+  speech = null;
+  chrome.tts.stop();
+}
+function checkGeneration(generation) {
+  if (!EasyDicState.enabled || generation !== featureGeneration) throw new Error("EasyDic is off or the operation was cancelled.");
+}
+EasyDicState.subscribe(enabled => {
+  if (!enabled) {
+    featureGeneration++;
+    for (const key of jobs.keys()) cancelJob(key);
+    translator.cancelAll();
+    stopSpeech();
+    scanningTabs.clear();
+  }
+});
+
+// A live port owns speech. Closing the source view stops only its own utterance.
+chrome.runtime.onConnect.addListener(port => {
+  if (port.name !== "pronunciation" || port.sender?.id !== chrome.runtime.id) return;
+  let disconnected = false;
+  port.onDisconnect.addListener(() => {
+    disconnected = true;
+    if (speech?.port === port) stopSpeech();
+  });
+  port.onMessage.addListener(async message => {
+    let request;
+    try {
+      await EasyDicState.requireEnabled();
+      if (disconnected) return;
+      const text = validateText(message.text);
+      stopSpeech();
+      request = { port, tabId: port.sender.tab?.id };
+      speech = request;
+      const voices = (await chrome.tts.getVoices()).filter(voice => !voice.remote && /^en(?:-|$)/i.test(voice.lang || ""));
+      if (disconnected || speech !== request || !EasyDicState.enabled) return;
+      const voice = voices.find(voice => voice.lang.toLowerCase() === "en-us") || voices[0];
+      if (!voice) throw new Error("No local English voice is available. Install an English speech voice in your system settings, then try again.");
+      await chrome.tts.speak(text, {
+        voiceName: voice.voiceName, lang: voice.lang, ...(voice.extensionId ? { extensionId: voice.extensionId } : {}),
+        rate: 1, enqueue: false,
+        onEvent(event) {
+          if (speech !== request) return;
+          if (event.type === "error" && !disconnected) port.postMessage({ error: "Could not play pronunciation. Check your English speech voice and try again." });
+          if (["end", "error", "interrupted", "cancelled"].includes(event.type)) speech = null;
+        }
+      });
+    } catch (error) {
+      if (request && speech !== request) return;
+      if (speech === request) speech = null;
+      if (!disconnected) port.postMessage({ error: error.message || "Could not play pronunciation. Try again." });
+    }
+  });
+});
 
 function owner(sender) {
   return sender.documentId || `${sender.tab?.id ?? "popup"}:${sender.frameId ?? 0}`;
@@ -43,17 +102,22 @@ async function activeSource(sender) {
 }
 
 async function scanTab() {
+  await EasyDicState.requireEnabled();
+  const generation = featureGeneration;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error("Open an ordinary webpage to scan text.");
   try {
     const response = await chrome.tabs.sendMessage(tab.id, { type: "canScan" }, { frameId: 0 });
     if (!response?.ok) throw new Error("Page unavailable");
+    checkGeneration(generation);
     return tab;
   } catch { throw new Error("Scanning needs an ordinary webpage. Refresh it after reloading EasyDic."); }
 }
 
-async function beginTabScan(tab) {
+async function beginTabScan(tab, generation = featureGeneration) {
+  await EasyDicState.requireEnabled();
   const [active] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+  checkGeneration(generation);
   if (active?.id !== tab.id) return;
   return chrome.tabs.sendMessage(tab.id, { type: "beginScan" }, { frameId: 0 });
 }
@@ -64,6 +128,7 @@ chrome.runtime.onConnect.addListener(port => {
   if (port.name !== "scan-area" || port.sender?.id !== chrome.runtime.id ||
       port.sender.url !== chrome.runtime.getURL("popup.html")) return;
   let preparedTab;
+  const generation = featureGeneration;
   let disconnected = false;
   let preparing = false;
   port.onMessage.addListener(async message => {
@@ -81,7 +146,7 @@ chrome.runtime.onConnect.addListener(port => {
   });
   port.onDisconnect.addListener(() => {
     disconnected = true;
-    if (preparedTab) beginTabScan(preparedTab).catch(() => {});
+    if (preparedTab) beginTabScan(preparedTab, generation).catch(() => {});
   });
 });
 
@@ -120,8 +185,9 @@ function cancelJob(key) {
 
 async function handle(message, sender) {
   if (message.type === "scanState") {
+    await EasyDicState.ready;
     if (sender.tab && sender.frameId === 0) {
-      if (message.active) scanningTabs.set(sender.tab.id, sender.tab.windowId);
+      if (message.active && EasyDicState.enabled) scanningTabs.set(sender.tab.id, sender.tab.windowId);
       else scanningTabs.delete(sender.tab.id);
     }
     return {};
@@ -133,10 +199,12 @@ async function handle(message, sender) {
   }
   if (message.type === "clearWords") return editLibrary(() => []);
   if (message.type === "startScan") {
+    await EasyDicState.requireEnabled();
     return beginTabScan(await scanTab());
   }
   const key = `${owner(sender)}:${message.id}`;
   if (message.type === "cancel") { cancelJob(key); return {}; }
+  await EasyDicState.requireEnabled();
   if (typeof message.id !== "string" || message.id.length > 100) throw new Error("Invalid request.");
   const controller = new AbortController();
   jobs.set(key, { controller, type: message.type, tabId: sender.tab?.id, windowId: sender.tab?.windowId });
@@ -162,10 +230,14 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 });
 
 async function invokeShortcut(invokingTab, command = "scan-area") {
+  await EasyDicState.ready;
+  if (!EasyDicState.enabled) return "disabled";
+  const generation = featureGeneration;
   const tab = invokingTab?.id ? invokingTab : (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
   if (!tab?.id) throw new Error("Open an ordinary webpage to use EasyDic.");
   const [active] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
   if (active?.id !== tab.id) return "tab-changed";
+  if (!EasyDicState.enabled || generation !== featureGeneration) return "disabled";
   const result = await chrome.tabs.sendMessage(tab.id, { type: command === "capture-area" ? "beginScan" : "invokeSelection" }, { frameId: 0 });
   if (!result?.ok) throw new Error("Refresh the page after reloading EasyDic.");
   await chrome.action.setBadgeText({ text: "" });
@@ -214,5 +286,6 @@ chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
 
 chrome.tabs.onRemoved.addListener(tabId => {
   scanningTabs.delete(tabId);
+  if (speech?.tabId === tabId) stopSpeech();
   for (const [key, job] of jobs) if (job.tabId === tabId) cancelJob(key);
 });

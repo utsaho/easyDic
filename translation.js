@@ -57,6 +57,8 @@ export class Translator {
     this.timeout = timeout;
     this.cache = new Map();
     this.inflight = new Map();
+    this.controllers = new Set();
+    this.generation = 0;
     this.persist = Promise.resolve();
     this.ready = this.restore();
   }
@@ -84,10 +86,18 @@ export class Translator {
     return translations.join(" ");
   }
 
+  cancelAll() {
+    this.generation++;
+    for (const controller of this.controllers) controller.abort(new DOMException("Cancelled", "AbortError"));
+    this.inflight.clear();
+  }
+
   async chunk(text) {
     if (this.cache.has(text)) return this.cache.get(text);
     if (this.inflight.has(text)) return this.inflight.get(text);
+    const generation = this.generation;
     const promise = this.request(text).then(async translation => {
+      if (generation !== this.generation) throw new DOMException("Cancelled", "AbortError");
       this.cache.set(text, translation);
       while (this.cache.size > 100) this.cache.delete(this.cache.keys().next().value);
       const snapshot = [...this.cache];
@@ -95,13 +105,14 @@ export class Translator {
         this.storage?.set({ translationCache: snapshot })).catch(() => {});
       await this.persist;
       return translation;
-    }).finally(() => this.inflight.delete(text));
+    }).finally(() => { if (this.inflight.get(text) === promise) this.inflight.delete(text); });
     this.inflight.set(text, promise);
     return promise;
   }
 
   async request(text) {
     const controller = new AbortController();
+    this.controllers.add(controller);
     const timer = setTimeout(() => controller.abort(), this.timeout);
     try {
       const url = new URL("https://api.mymemory.translated.net/get");
@@ -124,9 +135,12 @@ export class Translator {
       }
       return data.responseData.translatedText.trim();
     } catch (error) {
-      if (controller.signal.aborted) throw new Error("Translation timed out. Please retry.");
+      if (controller.signal.aborted) {
+        if (controller.signal.reason?.message === "Cancelled") throw controller.signal.reason;
+        throw new Error("Translation timed out. Please retry.");
+      }
       if (error instanceof TypeError) throw new Error("Could not connect. Check your internet connection and retry.");
       throw error;
-    } finally { clearTimeout(timer); }
+    } finally { clearTimeout(timer); this.controllers.delete(controller); }
   }
 }

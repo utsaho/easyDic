@@ -15,6 +15,35 @@ let storageRevision = 0;
 const indices = { saved: 0, page: 0 };
 let resultPanel;
 let resultOrigin;
+let toggleBusy = false;
+const toggle = byId("extension-toggle");
+const wordSpeaker = new EasyDicSpeaker(byId("word-speaker"), currentWord, message => setStatus(status, message, !!message));
+function renderFeatures() {
+  const enabled = EasyDicState.enabled;
+  toggle.textContent = enabled ? "On" : "Off";
+  toggle.setAttribute("aria-checked", String(enabled));
+  toggle.title = enabled ? "Turn EasyDic off" : "Turn EasyDic on";
+  byId("scan-area").disabled = !enabled;
+  input.disabled = !enabled;
+  byId("dictionary-search-button").disabled = !enabled || !input.value.trim() || [...input.value].length > 2000;
+  setStatus(byId("app-status"), enabled ? "" : "EasyDic is off.");
+  if (!enabled) { resultPanel?.close(); wordSpeaker.stop(); }
+  renderLibrary();
+}
+EasyDicState.subscribe(renderFeatures);
+EasyDicState.ready.then(() => { toggle.disabled = false; renderFeatures(); }).catch(() => {
+  setStatus(byId("app-status"), "Could not load EasyDic settings. Close and reopen the toolbar to retry.", true);
+});
+toggle.onclick = async () => {
+  if (toggleBusy) return;
+  toggleBusy = true;
+  toggle.disabled = true;
+  try {
+    await chrome.storage.local.set({ extensionEnabled: !EasyDicState.enabled });
+  } catch {
+    setStatus(byId("app-status"), "Could not save the setting. Click the switch to retry.", true);
+  } finally { toggleBusy = false; toggle.disabled = false; }
+};
 
 function setStatus(element, text, error = false) {
   element.textContent = text;
@@ -36,6 +65,8 @@ function renderLibrary() {
   byId("empty-hint").hidden = hasWords || !loaded;
   byId("word-position").textContent = hasWords ? `${indices[libraryView.value] + 1} of ${entries.length}` : "0 of 0";
   for (const id of ["search-word", "previous-word", "next-word", "random-word"]) byId(id).disabled = !hasWords || !loaded;
+  translateButton.disabled ||= !EasyDicState.enabled;
+  wordSpeaker.update();
   bulkSave.hidden = libraryView.value !== "page";
   bulkSave.disabled = !hasWords || libraryBusy;
   byId("remove-words").disabled = !savedWords.length || libraryBusy;
@@ -46,7 +77,7 @@ function applySaved(value) {
   if (libraryView.value === "saved") {
     const preserved = savedWords.findIndex(text => text.toLowerCase() === previous.toLowerCase());
     indices.saved = preserved >= 0 ? preserved : Math.min(indices.saved, Math.max(0, savedWords.length - 1));
-    if (currentWord() !== previous && resultOrigin === "saved") resultPanel?.close();
+    if (currentWord() !== previous) { wordSpeaker.stop(); if (resultOrigin === "saved") resultPanel?.close(); }
   }
   loaded = true;
   renderLibrary();
@@ -74,9 +105,11 @@ chrome.storage.local.get("savedWords").then(({ savedWords: stored }) => {
   } catch { pageWords = []; }
   if (libraryView.value === "page") renderLibrary();
 })();
-renderLibrary();
+renderFeatures();
 
 async function translate(text, origin) {
+  if (!EasyDicState.enabled) return;
+  wordSpeaker.stop();
   resultOrigin = origin;
   resultPanel ||= new EasyDicPanel({ mount: byId("translation-result"), inline: true });
   const completion = resultPanel.translate(text, { showSource: origin === "typed" });
@@ -86,11 +119,13 @@ async function translate(text, origin) {
   if (resultPanel.operation === operation) resultPanel.host.scrollIntoView({ block: "nearest" });
 }
 libraryView.addEventListener("change", () => {
+  wordSpeaker.stop();
   resultPanel?.close();
   setStatus(status, "");
   renderLibrary();
 });
 function moveEntry(direction) {
+  wordSpeaker.stop();
   const length = words().length;
   if (!length) return;
   resultPanel?.close();
@@ -115,7 +150,7 @@ input.addEventListener("input", () => {
   const count = [...input.value].length;
   byId("character-count").textContent = `${count.toLocaleString("en-US")} / 2,000`;
   byId("character-count").classList.toggle("error", count > 2000);
-  byId("dictionary-search-button").disabled = !input.value.trim() || count > 2000;
+  byId("dictionary-search-button").disabled = !EasyDicState.enabled || !input.value.trim() || count > 2000;
 });
 byId("dictionary-search-form").addEventListener("submit", event => {
   event.preventDefault();
@@ -163,6 +198,7 @@ async function loadShortcutActivity() {
       started: "received; sent to the page",
       "no-selection": "received; no selected article text found",
       busy: "received; an operation is already active",
+      disabled: "received; EasyDic is off",
       "tab-changed": "received; the active tab changed",
       unavailable: "received; page unavailable"
     };
@@ -194,6 +230,7 @@ loadShortcut();
 loadShortcutActivity();
 window.addEventListener("focus", () => { loadShortcut(); loadShortcutActivity(); });
 byId("scan-area").onclick = () => {
+  if (!EasyDicState.enabled) return;
   const button = byId("scan-area");
   button.disabled = true;
   try {
@@ -201,16 +238,16 @@ byId("scan-area").onclick = () => {
     port.onMessage.addListener(result => {
       if (result.ok) { window.close(); return; }
       setStatus(byId("app-status"), result.error, true);
-      button.disabled = false;
+      button.disabled = !EasyDicState.enabled;
       port.disconnect();
     });
     port.onDisconnect.addListener(() => {
       if (chrome.runtime.lastError) setStatus(byId("app-status"), "Could not start scanning. Reload EasyDic and refresh the page.", true);
-      button.disabled = false;
+      button.disabled = !EasyDicState.enabled;
     });
     port.postMessage({ type: "prepare" });
   } catch (error) {
-    button.disabled = false;
+    button.disabled = !EasyDicState.enabled;
     setStatus(byId("app-status"), error.message, true);
   }
 };

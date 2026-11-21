@@ -5,6 +5,10 @@
   let readingImage = false;
   const pageWords = [];
 
+  EasyDicState.subscribe(enabled => {
+    if (!enabled) { cancelScan(); panel?.close(); }
+  });
+
   function scanState(active) {
     chrome.runtime.sendMessage({ target: "background", type: "scanState", active }).catch(() => {});
   }
@@ -33,6 +37,7 @@
   // Selection itself is entirely native. Only an explicit extension command
   // reads it and starts a translation. Scanning has its own command.
   function invokeSelection() {
+    if (!EasyDicState.enabled) return "disabled";
     if (scan || readingImage) return "busy";
     const text = selectedText();
     if (!text) return "no-selection";
@@ -58,6 +63,7 @@
   }
 
   function beginScan() {
+    if (!EasyDicState.enabled) return;
     cancelScan();
     panel?.close();
     const host = document.createElement("div");
@@ -120,6 +126,17 @@
 
   chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (sender.id !== chrome.runtime.id) return;
+    if (["canScan", "showTranslation", "invokeSelection", "beginScan"].includes(message?.type)) {
+      EasyDicState.ready.then(() => {
+        if (!EasyDicState.enabled) { respond({ ok: message.type === "invokeSelection" || message.type === "beginScan", status: "disabled", error: "EasyDic is off." }); return; }
+        handleMessage(message, sender, respond);
+      }).catch(() => respond({ ok: false, error: "Could not load EasyDic settings." }));
+      return true;
+    }
+    handleMessage(message, sender, respond);
+  });
+  function handleMessage(message, sender, respond) {
+    if (sender.id !== chrome.runtime.id) return;
     if (message?.type === "getTemporaryWords") respond({ words: [...pageWords] });
     if (message?.type === "canScan") respond({ ok: true });
     if (message?.type === "showTranslation") {
@@ -135,5 +152,5 @@
     }
     if (message?.type === "cancelScan") { cancelScan(); respond({ ok: true }); }
     if (message?.type === "captureComplete" && readingImage && panel?.operation === message.id) panel.captureComplete();
-  });
+  }
 })();

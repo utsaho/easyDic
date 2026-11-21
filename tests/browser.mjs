@@ -118,6 +118,26 @@ try {
   let worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
   const extensionId = new URL(worker.url()).hostname;
   await mockTranslation(worker);
+  await worker.evaluate(() => {
+    globalThis.speechCalls = [];
+    globalThis.speechStops = 0;
+    globalThis.voiceMode = "normal";
+    chrome.tts.getVoices = async () => {
+      if (voiceMode === "delayed") await new Promise(resolve => setTimeout(resolve, 500));
+      return voiceMode === "missing" ? [] : [
+        { voiceName: "Remote", lang: "en-US", remote: true },
+        { voiceName: "British", lang: "en-GB", remote: false },
+        { voiceName: "Local", lang: "en-US", remote: false }
+      ];
+    };
+    chrome.tts.speak = async (text, options) => {
+      speechCalls.push({ text, voiceName: options.voiceName, lang: options.lang, rate: options.rate, enqueue: options.enqueue });
+      globalThis.speechEvent = options.onEvent;
+      if (voiceMode === "error") throw new Error("Simulated speech failure");
+      options.onEvent({ type: "start" });
+    };
+    chrome.tts.stop = () => { speechStops++; };
+  });
   await worker.evaluate(() => chrome.storage.local.set({ savedWords: ["Legacy", "hello"], enabled: false }));
   const page = context.pages()[0] || await context.newPage();
   const errors = [];
@@ -156,6 +176,35 @@ try {
   assert.equal((await panel(page)).removedControls, 0);
   await page.screenshot({ path: join(tmpdir(), "easydic-page-result.png") });
   console.log("PASS native selection remains passive; selection command translates; old enabled preference ignored");
+  assert.deepEqual(await worker.evaluate(() => speechCalls), []);
+  await click(page, ".source");
+  await click(page, ".translation");
+  assert.deepEqual(await worker.evaluate(() => speechCalls), []);
+  await click(page, ".speaker");
+  await until(async () => (await worker.evaluate(() => speechCalls.length)) === 1, "page pronunciation");
+  assert.deepEqual(await worker.evaluate(() => speechCalls[0]), { text: "I am reading an article.", voiceName: "Local", lang: "en-US", rate: 1, enqueue: false });
+  await click(page, ".speaker");
+  await until(async () => (await worker.evaluate(() => speechCalls.length)) === 2, "replay pronunciation");
+  assert.ok(await worker.evaluate(() => speechStops > 0));
+  let stops = await worker.evaluate(() => speechStops);
+  await page.keyboard.press("Escape");
+  await until(async () => (await worker.evaluate(() => speechStops)) > stops, "closing result stops speech");
+  await select(page, "#one"); await invoke();
+  await until(async () => (await panel(page))?.result, "result reopened");
+  await worker.evaluate(() => { voiceMode = "missing"; });
+  await click(page, ".speaker");
+  await until(async () => (await shadow(page, "data-easydic-panel", function () { return this.querySelector(".speech-status").textContent; }))?.includes("No local English voice"), "missing English voice guidance");
+  assert.equal((await panel(page)).result, "আমি একটি নিবন্ধ পড়ছি।");
+  await worker.evaluate(() => { voiceMode = "error"; });
+  await click(page, ".speaker");
+  await until(async () => (await shadow(page, "data-easydic-panel", function () { return this.querySelector(".speech-status").textContent; }))?.includes("Simulated speech failure"), "speech rejection");
+  await worker.evaluate(() => { voiceMode = "normal"; });
+  await click(page, ".speaker");
+  await until(async () => (await worker.evaluate(() => speechCalls.length)) === 4, "speech recovery");
+  await worker.evaluate(() => speechEvent({ type: "error" }));
+  await until(async () => (await shadow(page, "data-easydic-panel", function () { return this.querySelector(".speech-status").textContent; }))?.includes("Could not play pronunciation"), "asynchronous speech error");
+  console.log("PASS speaker-only pronunciation, local English voice, replay, close, and speech errors");
+
 
   await worker.evaluate(() => {
     globalThis.originalSet = chrome.storage.local.set.bind(chrome.storage.local);
@@ -206,6 +255,11 @@ try {
   assert.equal(await page.locator("[data-easydic-panel]").count(), 1);
   await until(async () => (await worker.evaluate(() => requests)).includes("Slow translation."), "pending request");
   assert.equal((await worker.evaluate(() => requests)).filter(text => text === "Slow translation.").length, 1);
+  await worker.evaluate(() => { voiceMode = "missing"; });
+  await click(page, ".speaker");
+  await until(async () => (await shadow(page, "data-easydic-panel", function () { return this.querySelector(".speech-status").textContent; }))?.includes("No local English voice"), "speech error during translation");
+  assert.equal((await panel(page)).status, "Translating…");
+  await worker.evaluate(() => { voiceMode = "normal"; });
   await page.mouse.click(950, 80); assert.equal((await panel(page)).hidden, true);
   await pause(1300); assert.equal((await panel(page)).hidden, true);
   await select(page, "#two"); await pause(450); assert.equal((await panel(page)).hidden, true);
@@ -430,6 +484,159 @@ try {
   await popup.setViewportSize({ width: 450, height: 600 });
   console.log("PASS equal columns, blank result reservation, Enter search, compact source/result, manual selection, focus retention, navigation, errors/retry, stale cancellation, and narrow/long/dark layouts");
 
+  // Pronunciation in both toolbar sources, including keyboard activation.
+  await popup.locator("#word-speaker").focus();
+  let speechCount = await worker.evaluate(() => speechCalls.length);
+  await popup.keyboard.press("Enter");
+  await until(async () => (await worker.evaluate(() => speechCalls.length)) > speechCount, "saved entry pronunciation");
+  assert.equal(await worker.evaluate(() => speechCalls.at(-1).text), await popup.locator("#word-card").textContent());
+  stops = await worker.evaluate(() => speechStops);
+  await popup.locator("#next-word").click();
+  await until(async () => (await worker.evaluate(() => speechStops)) > stops, "navigation stops saved entry speech");
+  await popup.locator("#previous-word").click();
+  await popup.locator("#dictionary-search-input").fill("Pronounce this phrase.");
+  await popup.locator("#dictionary-search-button").click();
+  await until(async () => (await panel(popup, "translation-result"))?.result.includes("Pronounce"), "typed speech source");
+  speechCount = await worker.evaluate(() => speechCalls.length);
+  await click(popup, ".speaker", "translation-result");
+  await until(async () => (await worker.evaluate(() => speechCalls.length)) > speechCount, "typed result pronunciation");
+  assert.equal(await worker.evaluate(() => speechCalls.at(-1).text), "Pronounce this phrase.");
+
+  // Setting write failure keeps the confirmed state and permits a retry.
+  await popup.evaluate(() => {
+    globalThis.originalSettingSet = chrome.storage.local.set;
+    chrome.storage.local.set = async () => { throw new Error("Simulated setting failure"); };
+  });
+  await popup.locator("#extension-toggle").click();
+  await until(async () => (await popup.locator("#app-status").textContent()).includes("Could not save"), "toggle failure");
+  assert.equal(await popup.locator("#extension-toggle").getAttribute("aria-checked"), "true");
+  await popup.evaluate(() => { chrome.storage.local.set = originalSettingSet; });
+  stops = await worker.evaluate(() => speechStops);
+  await popup.locator("#extension-toggle").focus(); await popup.keyboard.press("Space");
+  await until(async () => await popup.locator("#extension-toggle").getAttribute("aria-checked") === "false", "toggle off");
+  await until(async () => (await worker.evaluate(() => speechStops)) > stops, "off stops speech");
+  assert.equal((await panel(popup, "translation-result")).hidden, true);
+  for (const id of ["dictionary-search-input", "dictionary-search-button", "search-word", "scan-area", "word-speaker"]) assert.equal(await popup.locator(`#${id}`).isDisabled(), true);
+  assert.equal(await popup.locator("#next-word").isDisabled(), false);
+  const requestsBeforeOff = await worker.evaluate(() => requests.length);
+  const speechBeforeOff = await worker.evaluate(() => speechCalls.length);
+  await page.bringToFront(); await select(page, "#one");
+  assert.equal(await deliver(), "disabled");
+  assert.equal(await invoke("capture-area"), "disabled");
+  assert.equal(await page.locator("[data-easydic-scan]").count(), 0);
+  const denied = await popup.evaluate(async () => {
+    const results = [];
+    for (const type of ["translate", "readImage", "startScan"]) results.push(await chrome.runtime.sendMessage({ target: "background", type, text: "Disabled text", id: type }));
+    return results;
+  });
+  assert.ok(denied.every(result => !result.ok && /off/i.test(result.error)));
+  const directPage = await worker.evaluate(async tabId => {
+    const results = [];
+    for (const type of ["invokeSelection", "beginScan", "showTranslation", "canScan"]) results.push(await chrome.tabs.sendMessage(tabId, { type, text: "Disabled text" }));
+    return results;
+  }, tab.id);
+  assert.ok(directPage.every(result => result.status === "disabled"));
+  const speechDenied = await popup.evaluate(() => new Promise(resolve => {
+    const port = chrome.runtime.connect({ name: "pronunciation" });
+    port.onMessage.addListener(result => { port.disconnect(); resolve(result); });
+    port.postMessage({ text: "Do not speak while off" });
+  }));
+  assert.match(speechDenied.error, /off/);
+  assert.equal(await worker.evaluate(() => requests.length), requestsBeforeOff);
+  assert.equal(await worker.evaluate(() => speechCalls.length), speechBeforeOff);
+  await popup.reload();
+  await until(async () => !await popup.locator("#extension-toggle").isDisabled(), "off state after reopening");
+  assert.equal(await popup.locator("#extension-toggle").getAttribute("aria-checked"), "false");
+  assert.match(await popup.locator("#shortcut-diagnostic").textContent(), /EasyDic is off/);
+  await popup.locator("#extension-toggle").click();
+  await until(async () => await popup.locator("#extension-toggle").getAttribute("aria-checked") === "true", "toggle on");
+  await page.bringToFront(); await select(page, "#one"); await invoke();
+  await until(async () => !(await panel(page))?.hidden && (await panel(page))?.result, "enabled without page refresh");
+
+  // A newer view owns speech; dismissing an older source must not stop it.
+  speechCount = await worker.evaluate(() => speechCalls.length);
+  await click(page, ".speaker");
+  await until(async () => (await worker.evaluate(() => speechCalls.length)) > speechCount, "page speech before replacement");
+  await popup.locator("#word-speaker").click();
+  await until(async () => (await worker.evaluate(() => speechCalls.length)) > speechCount + 1, "toolbar replaces page speech");
+  stops = await worker.evaluate(() => speechStops);
+  await page.keyboard.press("Escape"); await pause(100);
+  assert.equal(await worker.evaluate(() => speechStops), stops);
+  await popup.reload();
+  await until(async () => (await worker.evaluate(() => speechStops)) > stops, "closing toolbar document stops its speech");
+
+  // Delayed voice discovery cannot speak after disabling, even if re-enabled.
+  await worker.evaluate(() => { voiceMode = "delayed"; });
+  speechCount = await worker.evaluate(() => speechCalls.length);
+  await popup.locator("#word-speaker").click();
+  await popup.locator("#extension-toggle").click();
+  await until(async () => await popup.locator("#extension-toggle").getAttribute("aria-checked") === "false", "off during voice discovery");
+  await popup.locator("#extension-toggle").click(); await pause(650);
+  assert.equal(await worker.evaluate(() => speechCalls.length), speechCount);
+  await worker.evaluate(() => { voiceMode = "normal"; });
+
+  // Pending page and toolbar translations are both discarded on disable.
+  await page.bringToFront();
+  await page.locator("#slow").evaluate(element => { element.textContent = "Slow disabled page result."; });
+  await select(page, "#slow"); await invoke();
+  await popup.locator("#dictionary-search-input").fill("Slow disabled toolbar result.");
+  await popup.locator("#dictionary-search-button").click();
+  await until(async () => await worker.evaluate(() => requests.includes("Slow disabled toolbar result.")), "pending toolbar request");
+  await popup.locator("#extension-toggle").click();
+  await until(async () => (await panel(page))?.hidden && (await panel(popup, "translation-result"))?.hidden, "off closes all results");
+  await popup.locator("#extension-toggle").click(); await pause(1300);
+  assert.equal((await panel(page)).hidden, true);
+  assert.equal((await panel(popup, "translation-result")).hidden, true);
+  await page.bringToFront(); await invoke("capture-area");
+  assert.equal(await page.locator("[data-easydic-scan]").count(), 1);
+  await popup.locator("#extension-toggle").click();
+  await until(async () => !await page.locator("[data-easydic-scan]").count(), "off removes scan selector");
+  await popup.locator("#extension-toggle").click();
+  // A prepared toolbar scan must not start after an Off/On cycle.
+  await page.bringToFront();
+  await popup.evaluate(() => new Promise((resolve, reject) => {
+    globalThis.preparedScan = chrome.runtime.connect({ name: "scan-area" });
+    preparedScan.onMessage.addListener(result => result.ok ? resolve() : reject(new Error(result.error)));
+    preparedScan.postMessage({ type: "prepare" });
+  }));
+  await worker.evaluate(() => chrome.storage.local.set({ extensionEnabled: false }));
+  await until(async () => await popup.locator("#extension-toggle").getAttribute("aria-checked") === "false", "off after scan preparation");
+  await worker.evaluate(() => chrome.storage.local.set({ extensionEnabled: true }));
+  await until(async () => await popup.locator("#extension-toggle").getAttribute("aria-checked") === "true", "on after scan preparation");
+  await popup.evaluate(() => preparedScan.disconnect()); await pause(150);
+  assert.equal(await page.locator("[data-easydic-scan]").count(), 0);
+
+  // Hold an OCR response after capture so cancellation is deterministic.
+  await worker.evaluate(() => {
+    globalThis.originalRuntimeSend = chrome.runtime.sendMessage;
+    globalThis.originalCapture = chrome.tabs.captureVisibleTab;
+    chrome.tabs.captureVisibleTab = async () => "data:image/png;base64,test";
+    chrome.runtime.sendMessage = message => {
+      if (message.target === "offscreen" && message.type === "readImage") {
+        globalThis.ocrWaiting = true;
+        return new Promise(resolve => { globalThis.finishOCR = () => resolve({ ok: true, text: "Discarded image result." }); });
+      }
+      return originalRuntimeSend(message);
+    };
+  });
+  await page.bringToFront(); await invoke("capture-area");
+  await page.mouse.move(20, 20); await page.mouse.down(); await page.mouse.move(100, 100, { steps: 4 }); await page.mouse.up();
+  await until(async () => await worker.evaluate(() => globalThis.ocrWaiting), "OCR in flight");
+  const beforeLateOCR = await worker.evaluate(() => requests.length);
+  await popup.locator("#extension-toggle").click();
+  await until(async () => (await panel(page))?.hidden, "off hides OCR progress");
+  await popup.locator("#extension-toggle").click();
+  await worker.evaluate(() => finishOCR()); await pause(200);
+  assert.equal((await panel(page)).hidden, true);
+  assert.equal(await worker.evaluate(() => requests.length), beforeLateOCR);
+  await worker.evaluate(() => { chrome.runtime.sendMessage = originalRuntimeSend; chrome.tabs.captureVisibleTab = originalCapture; });
+  console.log("PASS disabling prepared scans and discarding delayed OCR after re-enabling");
+
+  // Restore the entry expected by the original persistence assertions.
+  await until(async () => !await popup.locator("#next-word").isDisabled(), "library ready");
+  while (await popup.locator("#word-card").textContent() !== selectedEntry) await popup.locator("#next-word").click();
+  console.log("PASS toolbar speech, global toggle, failed writes, disabled entry points, cross-view cancellation, and late responses");
+
   const writes = await popup.evaluate(() => Promise.all([
     chrome.runtime.sendMessage({ target: "background", type: "saveWords", words: ["Concurrent one"] }),
     chrome.runtime.sendMessage({ target: "background", type: "saveWords", words: ["Concurrent two"] })
@@ -479,6 +686,7 @@ try {
   await popup.close();
   assert.deepEqual(errors, []);
   const expectedSaved = await saved();
+  await worker.evaluate(() => chrome.storage.local.set({ extensionEnabled: false }));
   console.log("PASS simultaneous saves, shortcut assignment/remapping display, and page-refresh persistence");
 
   const version = context.browser().version();
@@ -490,6 +698,11 @@ try {
   await until(async () => await reopened.locator("#word-card").textContent() === "Legacy", "library after browser restart");
   assert.deepEqual(await worker.evaluate(async () => (await chrome.storage.local.get("savedWords")).savedWords), expectedSaved);
   assert.match(await reopened.locator("#word-position").textContent(), /of 6/);
+  await until(async () => !await reopened.locator("#extension-toggle").isDisabled(), "setting restored after browser restart");
+  assert.equal(await reopened.locator("#extension-toggle").getAttribute("aria-checked"), "false");
+  assert.equal(await reopened.locator("#search-word").isDisabled(), true);
+  await reopened.locator("#extension-toggle").click();
+  await until(async () => !await reopened.locator("#search-word").isDisabled(), "enabled after restart");
   console.log(`PASS browser-restart persistence · ${version} · all integration checks passed`);
   console.log("Native Windows/Linux shortcut key delivery is NOT verified by this suite.");
 } catch (error) {
